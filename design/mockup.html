@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feedbasha — UX mockup</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --ink:#0f172a; --muted:#64748b; --line:#e5e8ee;
+    --card:#ffffff; --accent:#0e9f6e; --accent-ink:#065f46;
+    --pin:#0e9f6e; --danger:#ef4444; --radius:14px;
+    --shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.08);
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+
+  /* ---------- step guide ---------- */
+  .steps{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    display:flex; gap:6px; align-items:center; z-index:40;
+    background:rgba(255,255,255,.8); backdrop-filter:blur(10px);
+    border:1px solid var(--line); border-radius:999px; padding:6px 8px; box-shadow:var(--shadow);
+    font-size:12.5px; color:var(--muted);
+  }
+  .steps b{color:var(--ink)}
+  .steps .st{padding:3px 10px; border-radius:999px; white-space:nowrap}
+  .steps .st.on{background:var(--accent); color:#fff}
+  .steps .st.on b{color:#fff}
+  .steps .sep{opacity:.4}
+
+  /* ---------- fake host app ---------- */
+  .wrap{max-width:960px; margin:0 auto; padding:72px 24px 120px}
+  .promo{
+    background:linear-gradient(90deg,#0e9f6e,#0b8f63); color:#fff; border-radius:var(--radius);
+    padding:14px 18px; font-weight:600; display:flex; justify-content:space-between; align-items:center;
+    box-shadow:var(--shadow);
+  }
+  .promo small{font-weight:500; opacity:.9}
+  .cols{display:grid; grid-template-columns:1.4fr 1fr; gap:20px; margin-top:20px}
+  @media(max-width:760px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow)}
+  .card h3{margin:0 0 12px; font-size:15px}
+  .field{margin-bottom:12px}
+  .field label{display:block; font-size:12px; color:var(--muted); margin-bottom:5px}
+  .field .input{height:38px; border:1px solid var(--line); border-radius:9px; background:#fbfcfd}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  .summary h3{display:flex; justify-content:space-between}
+  .summary .muted{color:var(--muted); font-weight:500; font-size:12px}
+  ul.items{list-style:none; margin:0 0 8px; padding:0}
+  li.line-item{display:flex; justify-content:space-between; padding:10px 8px; border-radius:9px; font-size:14px}
+  li.line-item .p{color:var(--muted)}
+  .total{display:flex; justify-content:space-between; border-top:1px dashed var(--line); margin-top:6px; padding:12px 8px 4px; font-weight:700}
+  .btn-primary{
+    margin-top:14px; width:100%; height:40px; border:0; border-radius:10px;
+    background:var(--accent); color:#fff; font-weight:600; font-size:14px; cursor:pointer;
+  }
+  .hint-note{color:var(--muted); font-size:12px; margin-top:18px; text-align:center}
+
+  /* ---------- select mode ---------- */
+  body.fb-selecting{cursor:crosshair}
+  body.fb-selecting [data-fb]{cursor:crosshair; transition:box-shadow .12s, background .12s}
+  body.fb-selecting [data-fb]:hover{box-shadow:0 0 0 2px rgba(14,159,110,.55), var(--shadow)}
+  [data-fb].fb-picked{box-shadow:0 0 0 2px var(--accent), 0 0 0 6px rgba(14,159,110,.15) !important}
+
+  /* pins */
+  .fb-pin{
+    position:absolute; z-index:35; width:22px; height:22px; margin:-11px 0 0 -11px;
+    background:var(--pin); color:#fff; border-radius:50%; border:2px solid #fff;
+    display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;
+    box-shadow:0 2px 8px rgba(14,159,110,.5); pointer-events:none;
+  }
+  /* drag rectangle */
+  .fb-rect{position:absolute; z-index:34; border:2px dashed var(--accent); background:rgba(14,159,110,.10); border-radius:8px; pointer-events:none}
+  .fb-region-box{position:absolute; z-index:33; border:2px solid var(--accent); background:rgba(14,159,110,.08); border-radius:8px; pointer-events:none}
+
+  /* ---------- widget ---------- */
+  .fb-widget{
+    position:fixed; right:22px; bottom:22px; z-index:50; user-select:none;
+  }
+  .fb-bubble{
+    width:56px; height:56px; border-radius:50%; cursor:pointer;
+    background:rgba(15,23,42,.72); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.14);
+    display:flex; align-items:center; justify-content:center; color:#fff;
+    box-shadow:0 10px 30px rgba(15,23,42,.35); transition:transform .15s, background .2s;
+  }
+  .fb-bubble:hover{transform:translateY(-2px)}
+  .fb-bubble svg{width:24px; height:24px}
+  .fb-pill{
+    display:none; align-items:center; gap:12px; cursor:pointer;
+    background:rgba(15,23,42,.82); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.14); color:#fff;
+    border-radius:999px; padding:10px 16px 10px 14px; box-shadow:0 10px 30px rgba(15,23,42,.35);
+  }
+  .fb-dot{width:10px; height:10px; border-radius:50%; background:#ff5d5d; box-shadow:0 0 0 0 rgba(255,93,93,.6); animation:pulse 1.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,93,.55)}70%{box-shadow:0 0 0 9px rgba(255,93,93,0)}100%{box-shadow:0 0 0 0 rgba(255,93,93,0)}}
+  .fb-time{font-variant-numeric:tabular-nums; font-weight:600; font-size:14px}
+  .fb-end{font-size:12px; opacity:.8; border-left:1px solid rgba(255,255,255,.18); padding-left:12px}
+  body.fb-rec .fb-bubble{display:none}
+  body.fb-rec .fb-pill{display:flex}
+
+  /* ---------- live caption ---------- */
+  .fb-caption{
+    position:fixed; left:50%; bottom:92px; transform:translateX(-50%);
+    z-index:45; max-width:min(680px,90vw); display:none;
+    background:rgba(15,23,42,.86); backdrop-filter:blur(12px); color:#fff;
+    border-radius:12px; padding:12px 16px; box-shadow:0 12px 34px rgba(15,23,42,.4);
+    font-size:15px; line-height:1.5;
+  }
+  body.fb-rec .fb-caption{display:block}
+  .fb-caption .lbl{display:block; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; opacity:.55; margin-bottom:3px}
+  .fb-caption .cur{display:inline-block; width:7px; margin-left:1px; background:#fff; animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .fb-hint{
+    position:fixed; left:50%; bottom:92px; transform:translateX(-50%); z-index:44; display:none;
+    background:rgba(15,23,42,.7); color:#fff; padding:8px 14px; border-radius:999px; font-size:12.5px;
+  }
+  body.fb-rec.fb-empty .fb-hint{display:block}
+  body.fb-rec.fb-empty .fb-caption{display:none}
+
+  /* ---------- review panel ---------- */
+  .fb-review{
+    position:fixed; top:0; right:0; height:100%; width:380px; max-width:92vw; z-index:60;
+    background:#fff; border-left:1px solid var(--line); box-shadow:-16px 0 40px rgba(15,23,42,.14);
+    transform:translateX(102%); transition:transform .28s cubic-bezier(.2,.7,.2,1);
+    display:flex; flex-direction:column;
+  }
+  .fb-review.open{transform:none}
+  .fb-rhead{padding:18px 18px 12px; border-bottom:1px solid var(--line)}
+  .fb-rhead h2{margin:0; font-size:16px; display:flex; align-items:center; gap:8px}
+  .fb-rhead p{margin:6px 0 0; color:var(--muted); font-size:12.5px}
+  .fb-list{flex:1; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px}
+  .fb-item{border:1px solid var(--line); border-radius:12px; padding:12px; position:relative; transition:opacity .15s}
+  .fb-item.dropped{opacity:.4}
+  .fb-item .top{display:flex; align-items:center; gap:8px; margin-bottom:6px}
+  .fb-badge{width:20px; height:20px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex:0 0 auto}
+  .fb-comp{font-weight:650; font-size:13.5px}
+  .fb-when{margin-left:auto; color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums}
+  .fb-src{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:var(--accent-ink); background:#effaf4; border-radius:6px; padding:3px 6px; display:inline-block; margin-bottom:7px; word-break:break-all}
+  .fb-said{font-size:13px; color:#334155; line-height:1.5}
+  .fb-said b{color:var(--muted); font-weight:600}
+  .fb-del{position:absolute; top:10px; right:10px; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; line-height:1; padding:2px}
+  .fb-del:hover{color:var(--danger)}
+  .fb-rfoot{padding:14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px}
+  .fb-copy{height:42px; border:0; border-radius:10px; background:var(--accent); color:#fff; font-weight:650; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px}
+  .fb-copy:hover{filter:brightness(1.05)}
+  .fb-preview-toggle{background:none; border:0; color:var(--muted); font-size:12px; cursor:pointer; text-decoration:underline}
+  .fb-preview{display:none; max-height:200px; overflow:auto; background:#0f172a; color:#d7e3f4; border-radius:10px; padding:12px; font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.5; white-space:pre-wrap}
+  .fb-preview.show{display:block}
+
+  /* ---------- toast ---------- */
+  .fb-toast{
+    position:fixed; left:50%; bottom:32px; transform:translateX(-50%) translateY(20px);
+    z-index:70; background:#0f172a; color:#fff; padding:12px 18px; border-radius:12px;
+    box-shadow:0 14px 40px rgba(15,23,42,.45); font-size:13.5px; display:flex; gap:9px; align-items:center;
+    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s;
+  }
+  .fb-toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  .fb-toast .ok{color:#34d399; font-weight:700}
+
+  .mock-flag{position:fixed; left:14px; bottom:14px; z-index:40; font-size:11px; color:var(--muted); background:rgba(255,255,255,.7); border:1px solid var(--line); padding:6px 10px; border-radius:8px; backdrop-filter:blur(8px)}
+  .mock-flag button{margin-left:8px; border:1px solid var(--line); background:#fff; border-radius:6px; padding:2px 8px; cursor:pointer; font-size:11px}
+</style>
+</head>
+<body>
+
+  <!-- step guide -->
+  <div class="steps" id="steps">
+    <span class="st on" data-step="1"><b>1</b> Start</span><span class="sep">›</span>
+    <span class="st" data-step="2"><b>2</b> Talk &amp; annotate</span><span class="sep">›</span>
+    <span class="st" data-step="3"><b>3</b> Review</span><span class="sep">›</span>
+    <span class="st" data-step="4"><b>4</b> Copy</span>
+  </div>
+
+  <!-- ======= FAKE HOST APP (this is the user's React app) ======= -->
+  <div class="wrap">
+    <div class="promo" data-fb="promo">
+      <span>🎉 Limited time — 20% off everything this weekend, no code needed</span>
+      <small>ends Sunday</small>
+    </div>
+
+    <div class="cols">
+      <div class="card" data-fb="payment">
+        <h3>Payment details</h3>
+        <div class="field"><label>Card number</label><div class="input"></div></div>
+        <div class="row2">
+          <div class="field"><label>Expiry</label><div class="input"></div></div>
+          <div class="field"><label>CVC</label><div class="input"></div></div>
+        </div>
+        <div class="field"><label>Name on card</label><div class="input"></div></div>
+      </div>
+
+      <div class="card summary" data-fb="summary">
+        <h3>Order summary <span class="muted">3 items</span></h3>
+        <ul class="items">
+          <li class="line-item" data-fb="lineitem"><span>Wireless keyboard</span><span class="p">$79.00</span></li>
+          <li class="line-item"><span>USB-C cable</span><span class="p">$19.00</span></li>
+          <li class="line-item"><span>Laptop stand</span><span class="p">$50.00</span></li>
+        </ul>
+        <div class="total"><span>Total</span><span>$148.00</span></div>
+        <button class="btn-primary" data-fb="submit" data-testid="place-order">Place order</button>
+      </div>
+    </div>
+
+    <p class="hint-note">↑ This is a stand-in for <b>your</b> React app. feedbasha rides on top of it.</p>
+  </div>
+
+  <!-- ======= FEEDBASHA WIDGET ======= -->
+  <div class="fb-widget">
+    <div class="fb-bubble" id="bubble" title="Start feedback session">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/>
+      </svg>
+    </div>
+    <div class="fb-pill" id="pill" title="End session">
+      <span class="fb-dot"></span>
+      <span class="fb-time" id="time">0:00</span>
+      <span class="fb-end">End ▸</span>
+    </div>
+  </div>
+
+  <div class="fb-hint" id="hint">Click any element — or drag a region — while you talk</div>
+
+  <div class="fb-caption" id="caption">
+    <span class="lbl">listening</span>
+    <span id="captext"></span><span class="cur" id="cur">&nbsp;</span>
+  </div>
+
+  <!-- ======= REVIEW PANEL ======= -->
+  <div class="fb-review" id="review">
+    <div class="fb-rhead">
+      <h2>🌿 Review your feedback</h2>
+      <p>Prune anything you didn't mean, then copy. Nothing leaves your machine.</p>
+    </div>
+    <div class="fb-list" id="rlist"></div>
+    <div class="fb-rfoot">
+      <button class="fb-copy" id="copy">📋 Copy context for your agent</button>
+      <button class="fb-preview-toggle" id="ptoggle">show what gets copied ▾</button>
+      <pre class="fb-preview" id="preview"></pre>
+    </div>
+  </div>
+
+  <!-- ======= TOAST ======= -->
+  <div class="fb-toast" id="toast"><span class="ok">✓</span> Copied context to clipboard — paste into your agent</div>
+
+  <div class="mock-flag">clickable mockup · STT is faked <button id="reset">↺ replay</button></div>
+
+<script>
+(function(){
+  const META = {
+    promo:    {comp:'<PromoBanner>', src:'apps/web/src/marketing/PromoBanner.tsx:8:5',  tree:'<App> › <PromoBanner>', el:'<div class="promo">…20% off everything…</div>', text:'Limited time — 20% off everything', snippet:"the promo banner text is too long — it wraps awkwardly on mobile, let's shorten it"},
+    payment:  {comp:'<PaymentPanel>', src:'apps/web/src/checkout/PaymentPanel.tsx:23:3', tree:'<CheckoutPage> › <PaymentPanel>', el:'<section class="card">…</section>', text:'Payment details', snippet:"the card number field should auto-format with spaces as you type"},
+    summary:  {comp:'<OrderSummary>', src:'apps/web/src/checkout/OrderSummary.tsx:15:3', tree:'<CheckoutPage> › <OrderSummary>', el:'<section class="card summary">…</section>', text:'Order summary · 3 items · $148.00', snippet:"this whole order summary should be collapsible on mobile"},
+    lineitem: {comp:'<LineItem>', src:'apps/web/src/checkout/LineItem.tsx:11:5', tree:'<OrderSummary> › <LineItems> › <LineItem>', el:'<li class="line-item">Wireless keyboard — $79.00</li>', text:'Wireless keyboard — $79.00', snippet:"can we show a small product thumbnail next to each line item"},
+    submit:   {comp:'<SubmitButton>', src:'apps/web/src/checkout/SubmitButton.tsx:42:7', tree:'<CheckoutPage> › <PaymentPanel> › <SubmitButton>', el:'<button class="btn-primary" data-testid="place-order">Place order</button>', text:'Place order', snippet:"this submit button feels too small and the color's off — should match the brand green"}
+  };
+  const REGION_SNIPPETS = [
+    "these should reflow into a single column on smaller screens",
+    "this whole block has too much vertical spacing",
+    "let's group these together visually with a subtle card"
+  ];
+
+  const body=document.body;
+  const bubble=document.getElementById('bubble');
+  const pill=document.getElementById('pill');
+  const timeEl=document.getElementById('time');
+  const caption=document.getElementById('caption');
+  const captext=document.getElementById('captext');
+  const cur=document.getElementById('cur');
+  const hint=document.getElementById('hint');
+  const review=document.getElementById('review');
+  const rlist=document.getElementById('rlist');
+  const toast=document.getElementById('toast');
+  const preview=document.getElementById('preview');
+  const ptoggle=document.getElementById('ptoggle');
+
+  let mode='idle', startTime=0, timer=null, n=0, anns=[], typeTimer=null;
+
+  function fmt(s){const m=Math.floor(s/60);return m+':'+String(Math.floor(s%60)).padStart(2,'0');}
+  function elapsed(){return (Date.now()-startTime)/1000;}
+  function setStep(k){document.querySelectorAll('.steps .st').forEach(e=>e.classList.toggle('on', +e.dataset.step===k));}
+
+  function typeCaption(text){
+    if(typeTimer) clearInterval(typeTimer);
+    captext.textContent=''; cur.style.display='inline-block';
+    let i=0;
+    typeTimer=setInterval(()=>{
+      captext.textContent=text.slice(0,++i);
+      if(i>=text.length){clearInterval(typeTimer); setTimeout(()=>{cur.style.display='none';},600);}
+    }, 22);
+  }
+
+  function pinAt(x,y,label){
+    const p=document.createElement('div');
+    p.className='fb-pin'; p.textContent=label;
+    p.style.left=x+'px'; p.style.top=y+'px';
+    document.body.appendChild(p); return p;
+  }
+
+  function addElementAnnotation(key, el){
+    n++;
+    const r=el.getBoundingClientRect();
+    el.classList.add('fb-picked');
+    const pin=pinAt(r.left+window.scrollX+9, r.top+window.scrollY+9, n);
+    const meta=META[key]||META.summary;
+    anns.push({n, key, meta, t:elapsed(), kept:true, pin, region:false, elRef:el});
+    body.classList.remove('fb-empty');
+    typeCaption(meta.snippet);
+    setStep(2);
+  }
+
+  function addRegionAnnotation(rect){
+    n++;
+    // find which targets the rectangle intersects
+    const hits=[];
+    document.querySelectorAll('[data-fb]').forEach(el=>{
+      const b=el.getBoundingClientRect();
+      const bx={l:b.left+window.scrollX, t:b.top+window.scrollY, r:b.right+window.scrollX, btm:b.bottom+window.scrollY};
+      if(rect.l<bx.r && rect.r>bx.l && rect.t<bx.btm && rect.btm>bx.t){ hits.push(el.dataset.fb); }
+    });
+    const comps=[...new Set(hits)].map(k=>(META[k]||{}).comp).filter(Boolean);
+    const top=hits.length?(META[hits[0]]||META.summary):META.summary;
+    const meta={
+      region:true,
+      comp:'region · '+(comps.length||1)+' element'+((comps.length!==1)?'s':''),
+      src:top.src, tree:top.tree,
+      el:comps.length?comps.join(', '):'(region)',
+      snippet:REGION_SNIPPETS[(n-1)%REGION_SNIPPETS.length]
+    };
+    const box=document.createElement('div');
+    box.className='fb-region-box';
+    box.style.left=rect.l+'px'; box.style.top=rect.t+'px';
+    box.style.width=(rect.r-rect.l)+'px'; box.style.height=(rect.btm-rect.t)+'px';
+    document.body.appendChild(box);
+    const pin=pinAt(rect.l+9, rect.t+9, n);
+    anns.push({n, meta, t:elapsed(), kept:true, pin, region:true, box});
+    body.classList.remove('fb-empty');
+    typeCaption(meta.snippet);
+    setStep(2);
+  }
+
+  // ---- session lifecycle ----
+  function start(){
+    mode='recording'; startTime=Date.now(); setStep(2);
+    body.classList.add('fb-rec','fb-selecting','fb-empty');
+    timeEl.textContent='0:00';
+    timer=setInterval(()=>{ timeEl.textContent=fmt(elapsed()); }, 250);
+  }
+  function end(){
+    mode='review'; clearInterval(timer); setStep(3);
+    body.classList.remove('fb-rec','fb-selecting','fb-empty');
+    renderReview(); review.classList.add('open');
+  }
+  function reset(){
+    mode='idle'; clearInterval(timer);
+    anns.forEach(a=>{a.pin&&a.pin.remove(); a.box&&a.box.remove(); a.elRef&&a.elRef.classList.remove('fb-picked');});
+    anns=[]; n=0;
+    body.classList.remove('fb-rec','fb-selecting','fb-empty');
+    review.classList.remove('open'); preview.classList.remove('show');
+    ptoggle.textContent='show what gets copied ▾';
+    setStep(1);
+  }
+
+  // ---- review panel ----
+  function renderReview(){
+    rlist.innerHTML='';
+    if(!anns.length){ rlist.innerHTML='<p style="color:#94a3b8;font-size:13px;padding:8px">No annotations captured.</p>'; }
+    anns.forEach(a=>{
+      const d=document.createElement('div');
+      d.className='fb-item'+(a.kept?'':' dropped');
+      d.innerHTML=
+        '<button class="fb-del" title="remove">✕</button>'+
+        '<div class="top"><span class="fb-badge">'+a.n+'</span>'+
+          '<span class="fb-comp">'+a.meta.comp+'</span>'+
+          '<span class="fb-when">'+fmt(a.t)+'</span></div>'+
+        '<div class="fb-src">'+a.meta.src+'</div>'+
+        '<div class="fb-said"><b>you said:</b> "'+a.meta.snippet+'"</div>';
+      d.querySelector('.fb-del').addEventListener('click',()=>{
+        a.kept=!a.kept; d.classList.toggle('dropped',!a.kept);
+        if(a.pin) a.pin.style.opacity=a.kept?1:.35;
+        if(a.box) a.box.style.opacity=a.kept?1:.35;
+        if(a.elRef) a.elRef.style.opacity=a.kept?1:.5;
+      });
+      rlist.appendChild(d);
+    });
+  }
+
+  function buildMarkdown(){
+    const kept=anns.filter(a=>a.kept);
+    let md='# feedbasha session — '+kept.length+' annotation'+(kept.length!==1?'s':'')+' ('+fmt(elapsed())+')\n\n';
+    md+='## Transcript\n';
+    kept.forEach(a=>{ md+='['+fmt(a.t)+'] '+a.meta.snippet+' [#'+a.n+']\n'; });
+    md+='\n## Annotations\n';
+    kept.forEach(a=>{
+      md+='### [#'+a.n+'] '+a.meta.comp+' · '+fmt(a.t)+'\n';
+      md+='- source: '+a.meta.src+'\n';
+      md+='- tree:   '+a.meta.tree+'\n';
+      md+='- element: '+a.meta.el+'\n';
+      if(a.meta.text) md+='- text:   "'+a.meta.text+'"\n';
+      md+='\n';
+    });
+    return md.trim();
+  }
+
+  function copy(){
+    setStep(4);
+    const md=buildMarkdown();
+    preview.textContent=md;
+    if(navigator.clipboard) navigator.clipboard.writeText(md).catch(()=>{});
+    toast.classList.add('show');
+    setTimeout(()=>toast.classList.remove('show'), 2600);
+  }
+
+  // ---- wiring ----
+  bubble.addEventListener('click', start);
+  pill.addEventListener('click', end);
+  document.getElementById('copy').addEventListener('click', copy);
+  document.getElementById('reset').addEventListener('click', reset);
+  ptoggle.addEventListener('click',()=>{
+    const on=preview.classList.toggle('show');
+    ptoggle.textContent=on?'hide preview ▴':'show what gets copied ▾';
+  });
+
+  // element click capture (recording only)
+  document.querySelectorAll('[data-fb]').forEach(el=>{
+    el.addEventListener('click',(e)=>{
+      if(mode!=='recording') return;
+      e.preventDefault(); e.stopPropagation();
+      addElementAnnotation(el.dataset.fb, el);
+    });
+  });
+
+  // drag-to-select-region (recording only, on empty space)
+  let dragging=false, dstart=null, rectEl=null;
+  document.addEventListener('mousedown',(e)=>{
+    if(mode!=='recording') return;
+    if(e.target.closest('[data-fb]')||e.target.closest('.fb-widget')||e.target.closest('.steps')||e.target.closest('.mock-flag')) return;
+    dragging=true; dstart={x:e.pageX,y:e.pageY};
+    rectEl=document.createElement('div'); rectEl.className='fb-rect';
+    document.body.appendChild(rectEl);
+  });
+  document.addEventListener('mousemove',(e)=>{
+    if(!dragging) return;
+    const l=Math.min(dstart.x,e.pageX), t=Math.min(dstart.y,e.pageY);
+    const w=Math.abs(e.pageX-dstart.x), h=Math.abs(e.pageY-dstart.y);
+    rectEl.style.left=l+'px'; rectEl.style.top=t+'px'; rectEl.style.width=w+'px'; rectEl.style.height=h+'px';
+  });
+  document.addEventListener('mouseup',(e)=>{
+    if(!dragging) return; dragging=false;
+    const l=Math.min(dstart.x,e.pageX), t=Math.min(dstart.y,e.pageY);
+    const r=Math.max(dstart.x,e.pageX), btm=Math.max(dstart.y,e.pageY);
+    rectEl.remove();
+    if((r-l)>24 && (btm-t)>24){ addRegionAnnotation({l,t,r,btm}); }
+  });
+
+  // keep pins aligned on scroll/resize
+  function relayout(){
+    anns.forEach(a=>{
+      if(a.region||!a.elRef) return;
+      const r=a.elRef.getBoundingClientRect();
+      a.pin.style.left=(r.left+window.scrollX+9)+'px';
+      a.pin.style.top=(r.top+window.scrollY+9)+'px';
+    });
+  }
+  window.addEventListener('scroll', relayout);
+  window.addEventListener('resize', relayout);
+
+  // ESC cancels
+  document.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && mode!=='idle') reset(); });
+})();
+</script>
+</body>
+</html>

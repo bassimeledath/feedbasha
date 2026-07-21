@@ -1,0 +1,32 @@
+{
+  "name": "feedbasha",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voice-based feedback capture for React apps — talk and point, paste into your coding agent.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["react", "feedback", "voice", "stt", "coding-agent"],
+  "license": "MIT",
+  "dependencies": {
+    "react-grab": "0.1.48"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}
