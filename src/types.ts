@@ -13,6 +13,9 @@ export interface FeedbashaConfig {
   stt?: STTOptions
   /** Widget corner. Default 'bottom-right'. */
   position?: 'bottom-right' | 'bottom-left'
+  /** Shrink the page while the review panel is open so it never overlaps your
+   *  app (default true). Set false to keep the panel as a pure overlay. */
+  dock?: boolean
   /** Called after the user copies. `markdown` is redacted; `session` is raw local data. */
   onCopy?: (markdown: string, session: SessionResult) => void
   /** Optionally scrub the assembled context before it is copied. */

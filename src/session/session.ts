@@ -61,7 +61,7 @@ export class Session {
   }
 
   constructor(private config: FeedbashaConfig) {
-    this.widget = new Widget(config.position ?? 'bottom-right', {
+    this.widget = new Widget(config.position ?? 'bottom-right', config.dock ?? true, {
       onStart: () => void this.start(),
       onStop: () => void this.stop(),
       onResume: () => void this.resume(),
@@ -96,6 +96,7 @@ export class Session {
   private async arm(): Promise<void> {
     const token = ++this.runToken
     this.phase = 'starting'
+    this.widget.setDocked(false)
     this.widget.setPhase('starting')
 
     const provider = await createProvider(this.config.stt)
@@ -336,6 +337,10 @@ export class Session {
     // to reorder, and that manual order is preserved from here on.
     this.events.sort((a, b) => a.t - b.t)
     this.widget.renderReview(this.buildResult())
+    // Dock the page so the panel doesn't overlap the app; pins re-anchor once
+    // the reflow settles.
+    this.widget.setDocked(true)
+    window.setTimeout(() => this.repositionPins(), 320)
   }
 
   private buildResult(): SessionResult {
@@ -358,15 +363,31 @@ export class Session {
     this.widget.renderReview(this.buildResult())
   }
 
-  /** Spotlight (in review) the on-page element a card points to, on hover. */
+  /** Spotlight (in review) the on-page element a card points to, on hover,
+   *  scrolling it into view and isolating its pin from the rest. */
   private hoverElement(id: number, on: boolean): void {
     if (this.reselectId != null) return // don't fight the reselect spotlight
     if (!on) {
       this.widget.spotlight(null)
+      this.isolatePin(null) // restore all pins
       return
     }
     const el = this.liveEls.get(id)
-    this.widget.spotlight(el && el.isConnected ? rectOf(el) : null)
+    if (!el || !el.isConnected) {
+      this.widget.spotlight(null)
+      return
+    }
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    this.isolatePin(id) // show only the hovered card's pin
+    this.widget.spotlight(rectOf(el))
+  }
+
+  /** Show only the pin for `only` (null = show every connected pin). */
+  private isolatePin(only: number | null): void {
+    for (const [pid, el] of this.liveEls) {
+      const show = (only == null || pid === only) && el.isConnected
+      this.widget.updatePin(pid, show ? rectOf(el) : null)
+    }
   }
 
   private reorder(ids: number[]): void {
@@ -460,6 +481,7 @@ export class Session {
       this.startupTimeout = null
     }
     this.teardownRecording()
+    this.widget.setDocked(false)
     this.provider?.dispose()
     this.provider = null
     this.widget.clearPins()

@@ -104,6 +104,7 @@ export class Widget {
 
   constructor(
     position: 'bottom-right' | 'bottom-left',
+    private dock: boolean,
     private h: WidgetHandlers,
   ) {
     this.host = document.createElement('div')
@@ -270,6 +271,22 @@ export class Widget {
     place(this.spotlightEl, rect)
   }
 
+  /**
+   * Dock the page: shrink it by the panel's width (via root margin, never a
+   * transform — that would offset our fixed overlay) so the review panel never
+   * covers the app. Skipped on narrow viewports where there's no room.
+   */
+  setDocked(on: boolean): void {
+    if (!this.dock) return
+    const el = document.documentElement
+    if (on && window.innerWidth >= 640) {
+      el.style.transition = 'margin-right .28s cubic-bezier(.2,.7,.2,1)'
+      el.style.marginRight = `${this.sheet.offsetWidth || 380}px`
+    } else {
+      el.style.marginRight = ''
+    }
+  }
+
   renderReview(result: SessionResult): void {
     this.setPhase('review')
     this.sheet.classList.add('open')
@@ -398,6 +415,7 @@ export class Widget {
   }
 
   destroy(): void {
+    document.documentElement.style.marginRight = ''
     this.clearPins()
     this.host.remove()
   }
