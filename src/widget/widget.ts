@@ -4,7 +4,9 @@ import { CSS } from './styles'
 
 export interface WidgetHandlers {
   onStart(): void
+  onStartText(): void
   onStop(): void
+  onTogglePause(): void
   onResume(): void
   onClose(): void
   onCopy(): void
@@ -14,10 +16,12 @@ export interface WidgetHandlers {
   onReorder(ids: number[]): void
   onReselect(id: number): void
   onHover(id: number, on: boolean): void
+  onComposeAdd(text: string): void
+  onComposeCancel(): void
 }
 
 export type Phase = 'idle' | 'starting' | 'recording' | 'review'
-export type CaptureMode = 'voice' | 'clickonly'
+export type CaptureMode = 'voice' | 'clickonly' | 'text'
 
 interface Rect {
   x: number
@@ -27,6 +31,9 @@ interface Rect {
 }
 
 const MIC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>`
+const PAUSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`
+const PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"/></svg>`
+const PENCIL_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => {
@@ -90,11 +97,20 @@ export class Widget {
   private pinsEl: HTMLElement
   private widgetEl: HTMLElement
   private bubble: HTMLElement
+  private switchBtn: HTMLElement
   private pill: HTMLElement
+  private pauseBtn: HTMLElement
+  private pstate: HTMLElement
+  private modelbl: HTMLElement
   private timeEl: HTMLElement
   private caption: HTMLElement
   private captext: HTMLElement
   private notice: HTMLElement
+  private composer: HTMLElement
+  private cbadge: HTMLElement
+  private csrc: HTMLElement
+  private ctext: HTMLTextAreaElement
+  private caddBtn: HTMLButtonElement
   private sheet: HTMLElement
   private slist: HTMLElement
   private copyBtn: HTMLButtonElement
@@ -129,11 +145,20 @@ export class Widget {
     this.pinsEl = q('[data-el="pins"]')
     this.widgetEl = q('[data-el="widget"]')
     this.bubble = q('[data-el="bubble"]')
+    this.switchBtn = q('[data-el="switch"]')
     this.pill = q('[data-el="pill"]')
+    this.pauseBtn = q('[data-el="pause"]')
+    this.pstate = q('[data-el="pstate"]')
+    this.modelbl = q('[data-el="modelbl"]')
     this.timeEl = q('[data-el="time"]')
     this.caption = q('[data-el="caption"]')
     this.captext = q('[data-el="captext"]')
     this.notice = q('[data-el="notice"]')
+    this.composer = q('[data-el="composer"]')
+    this.cbadge = q('[data-el="cbadge"]')
+    this.csrc = q('[data-el="csrc"]')
+    this.ctext = q<HTMLTextAreaElement>('[data-el="ctext"]')
+    this.caddBtn = q<HTMLButtonElement>('[data-el="cadd"]')
     this.sheet = q('[data-el="sheet"]')
     this.slist = q('[data-el="slist"]')
     this.copyBtn = q<HTMLButtonElement>('[data-el="copy"]')
@@ -144,11 +169,27 @@ export class Widget {
     this.toasttext = q('[data-el="toasttext"]')
 
     this.bubble.addEventListener('click', () => this.h.onStart())
-    this.pill.addEventListener('click', () => this.h.onStop())
+    this.switchBtn.addEventListener('click', () => this.h.onStartText())
+    this.pauseBtn.addEventListener('click', () => this.h.onTogglePause())
+    q<HTMLElement>('[data-el="end"]').addEventListener('click', () => this.h.onStop())
     q('[data-el="sclose"]').addEventListener('click', () => this.h.onClose())
     this.copyBtn.addEventListener('click', () => this.h.onCopy())
     this.resumeBtn.addEventListener('click', () => this.h.onResume())
     this.discardBtn.addEventListener('click', () => this.h.onDiscard())
+
+    // Text-mode composer wiring.
+    this.caddBtn.addEventListener('click', () => this.h.onComposeAdd(this.ctext.value))
+    q('[data-el="ccancel"]').addEventListener('click', () => this.h.onComposeCancel())
+    this.ctext.addEventListener('input', () => {
+      this.caddBtn.disabled = this.ctext.value.trim() === ''
+    })
+    this.ctext.addEventListener('keydown', (e) => {
+      // Enter commits; Shift+Enter inserts a newline. Esc is handled by the session.
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        if (this.ctext.value.trim()) this.h.onComposeAdd(this.ctext.value)
+      }
+    })
 
     // Drag-to-reorder within the review list.
     this.slist.addEventListener('dragover', (e) => {
@@ -175,8 +216,14 @@ export class Widget {
     return `
       <div class="fb-overlay"><div class="fb-spotlight" data-el="spotlight"></div><div class="fb-highlight" data-el="highlight"></div><div data-el="pins"></div></div>
       <div class="fb-widget ${pos}" data-el="widget">
+        <button class="fb-switch" data-el="switch" title="Type notes instead — click an element and annotate">or switch to <b>text</b></button>
         <div class="fb-bubble" data-el="bubble" title="Start feedback session">${MIC_SVG}</div>
-        <div class="fb-pill" data-el="pill" title="End session"><span class="fb-dot"></span><span class="fb-time" data-el="time">0:00</span><span class="fb-endlbl">End &#9656;</span></div>
+        <div class="fb-pill" data-el="pill"><button class="fb-pctl" data-el="pause" title="Pause">${PAUSE_SVG}</button><span class="fb-vsep"></span><span class="fb-dot"></span><span class="fb-time" data-el="time">0:00</span><span class="fb-modelbl" data-el="modelbl"></span><span class="fb-pstate" data-el="pstate"></span><span class="fb-vsep"></span><button class="fb-pctl fb-end" data-el="end" title="End session"><span>End</span> &#9656;</button></div>
+      </div>
+      <div class="fb-composer" data-el="composer">
+        <div class="fb-chead"><span class="fb-cbadge" data-el="cbadge">${PENCIL_SVG}</span><span class="fb-csrc" data-el="csrc"></span></div>
+        <textarea class="fb-ctext" data-el="ctext" placeholder="Add a note about this element…" spellcheck="false"></textarea>
+        <div class="fb-cfoot"><button class="fb-ccancel" data-el="ccancel">Cancel</button><button class="fb-cadd" data-el="cadd" disabled>Add &#9656;</button></div>
       </div>
       <div class="fb-caption" data-el="caption"><span class="lbl">listening</span><span data-el="captext"></span></div>
       <div class="fb-notice" data-el="notice"></div>
@@ -208,13 +255,31 @@ export class Widget {
     this.pill.style.display = p === 'recording' ? 'flex' : 'none'
     this.caption.style.display = 'none'
     this.notice.style.display = 'none'
+    if (p !== 'idle') this.widgetEl.classList.remove('can-switch') // only offer text at true idle
+    if (p !== 'recording') this.closeComposer()
     if (p !== 'review') this.sheet.classList.remove('open')
     if (p === 'idle') this.captext.textContent = ''
   }
 
+  /** Offer the "or switch to text" hover affordance (true idle only). */
+  setCanSwitch(on: boolean): void {
+    this.widgetEl.classList.toggle('can-switch', on)
+  }
+
   setMode(mode: CaptureMode): void {
     this.caption.style.display = mode === 'voice' ? 'block' : 'none'
-    this.notice.style.display = mode === 'clickonly' ? 'block' : 'none'
+    this.notice.style.display = mode === 'clickonly' || mode === 'text' ? 'block' : 'none'
+    this.pill.classList.toggle('text', mode === 'text')
+    this.modelbl.textContent = mode === 'text' ? 'text' : ''
+    if (mode === 'text') this.notice.textContent = 'Click any element to annotate it'
+  }
+
+  setPaused(on: boolean): void {
+    this.pill.classList.toggle('paused', on)
+    this.pauseBtn.innerHTML = on ? PLAY_SVG : PAUSE_SVG
+    this.pauseBtn.title = on ? 'Resume' : 'Pause'
+    this.pstate.textContent = on ? 'paused' : ''
+    if (on) this.caption.style.display = 'none'
   }
 
   setTimer(sec: number): void {
@@ -284,6 +349,36 @@ export class Widget {
   /** Dramatic focus: dims the rest of the page, leaving the target bright + ringed. */
   spotlight(rect: Rect | null): void {
     place(this.spotlightEl, rect)
+  }
+
+  /** Open the note composer anchored beside the given element rect (text mode). */
+  openComposer(rect: Rect, header: string): void {
+    this.csrc.textContent = header
+    this.ctext.value = ''
+    this.caddBtn.disabled = true
+    this.composer.style.display = 'block'
+    // Measure, then place: right of the element, flipping to left/below if clipped.
+    const w = this.composer.offsetWidth
+    const h = this.composer.offsetHeight
+    const gap = 10
+    let left = rect.x + rect.width + gap
+    if (left + w > window.innerWidth - 8) left = rect.x - w - gap
+    if (left < 8) left = Math.min(rect.x, window.innerWidth - w - 8)
+    let top = rect.y
+    if (top + h > window.innerHeight - 8) top = window.innerHeight - h - 8
+    this.composer.style.left = `${Math.max(8, left)}px`
+    this.composer.style.top = `${Math.max(8, top)}px`
+    this.ctext.focus()
+  }
+
+  /** Update the composer's source label once the element context resolves. */
+  setComposerHeader(header: string): void {
+    if (this.composer.style.display !== 'none') this.csrc.textContent = header
+  }
+
+  closeComposer(): void {
+    this.composer.style.display = 'none'
+    this.ctext.value = ''
   }
 
   /**
@@ -400,6 +495,16 @@ export class Widget {
       `<span class="fb-ctime">${fmtTime(ev.t)}</span>` +
       `<span class="fb-comp">${label}</span></div>` +
       `<div class="fb-src">${esc(refText)}</div>${said}`
+    // A typed note (text mode) is editable inline, like a speech card.
+    if (ev.note != null) {
+      const note = document.createElement('div')
+      note.className = 'fb-say'
+      note.contentEditable = 'true'
+      note.spellcheck = false
+      note.textContent = ev.note
+      note.addEventListener('input', () => this.h.onEdit(ev.id, note.textContent ?? ''))
+      card.appendChild(note)
+    }
     this.makeDraggable(card, ev.id)
     card.appendChild(mkBtn('fb-edit', '&#9998;', 'reselect element', () => this.h.onReselect(ev.id)))
     card.appendChild(mkDel(() => this.h.onDelete(ev.id)))

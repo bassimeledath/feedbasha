@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>feedbasha — pause vs stop, variations</title>
+<style>
+  :root { --accent:#0e9f6e; --red:#ff5d5d; --amber:#f5a623; --ink:#0f172a; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:#eef1f5; color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:40px 28px 80px;
+  }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#64748b; font-size:13.5px; margin:0 0 28px; max-width:760px; line-height:1.5; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:20px; max-width:1100px; }
+  .card {
+    background:#fff; border:1px solid #e5e8ee; border-radius:16px; padding:20px;
+    box-shadow:0 1px 2px rgba(15,23,42,.05),0 10px 30px rgba(15,23,42,.05);
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .card h2 { font-size:14.5px; margin:0; }
+  .card p { font-size:12.5px; color:#64748b; margin:0; line-height:1.5; }
+  .stage {
+    background:linear-gradient(135deg,#0b1220,#111a2e); border-radius:12px;
+    min-height:120px; display:flex; align-items:center; justify-content:center; padding:22px;
+  }
+  .row { display:flex; gap:10px; align-items:center; }
+  .toggle {
+    align-self:flex-start; font-size:12px; color:#475569; background:#f1f5f9;
+    border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; cursor:pointer;
+  }
+  .toggle:hover { background:#e8edf3; }
+  .state { font-size:11px; color:#94a3b8; }
+
+  /* ---- shared widget bits ---- */
+  .pill {
+    display:inline-flex; align-items:center; gap:12px;
+    background:rgba(15,23,42,.82); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.14); color:#fff;
+    border-radius:999px; padding:10px 14px; box-shadow:0 10px 30px rgba(15,23,42,.35);
+    user-select:none;
+  }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--red); }
+  .rec .dot { animation:pulse 1.4s infinite; }
+  .paused .dot { background:var(--amber); animation:none; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(255,93,93,.55)} 70%{box-shadow:0 0 0 9px rgba(255,93,93,0)} 100%{box-shadow:0 0 0 0 rgba(255,93,93,0)} }
+  .time { font-variant-numeric:tabular-nums; font-weight:600; font-size:14px; }
+  .lbl { font-size:12px; opacity:.85; }
+  .sep { width:1px; align-self:stretch; background:rgba(255,255,255,.18); }
+  .btn {
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    border:0; background:transparent; color:#fff; font:inherit; font-size:12.5px; padding:4px 6px; border-radius:8px;
+  }
+  .btn:hover { background:rgba(255,255,255,.12); }
+  .btn svg { width:14px; height:14px; }
+  .icon-btn {
+    width:34px; height:34px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+    cursor:pointer; border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.08); color:#fff;
+  }
+  .icon-btn:hover { background:rgba(255,255,255,.16); }
+  .icon-btn svg { width:15px; height:15px; }
+  .icon-btn.stop { background:rgba(255,93,93,.16); border-color:rgba(255,93,93,.35); }
+  .icon-btn.stop:hover { background:rgba(255,93,93,.28); }
+  .icon-btn.resume { background:var(--accent); border-color:transparent; }
+  .paused-lbl { font-size:12px; color:var(--amber); font-weight:600; }
+  svg { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+</style>
+</head>
+<body>
+  <h1>feedbasha — pause vs stop</h1>
+  <p class="sub">
+    While recording, <b>Pause</b> holds capture (mic + clicks) without ending the session — resume continues the
+    same log and timer. <b>Stop/End</b> finishes and opens review. Click the toggle under each variation to see its
+    <i>recording</i> ↔ <i>paused</i> states. Pick the one that feels best.
+  </p>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+  const I = {
+    pause: '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+    play:  '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>',
+    stop:  '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+    end:   '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  };
+
+  // Each variation renders a pill for a given state ('rec' | 'paused').
+  const variations = [
+    {
+      title: 'A · Split pill (inline)',
+      desc: 'One pill, three zones: pause on the left, timer in the middle, End on the right. Compact; everything in one place.',
+      render: (s) => s==='rec'
+        ? `<div class="pill rec"><button class="btn" data-act="pause" title="Pause">${I.pause}</button><span class="sep"></span><span class="dot"></span><span class="time">0:12</span><span class="sep"></span><button class="btn" data-act="stop">End ${I.end}</button></div>`
+        : `<div class="pill paused"><button class="btn" data-act="resume" title="Resume">${I.play}</button><span class="sep"></span><span class="dot"></span><span class="time">0:12</span><span class="paused-lbl">paused</span><span class="sep"></span><button class="btn" data-act="stop">End ${I.end}</button></div>`,
+    },
+    {
+      title: 'B · Media controls',
+      desc: 'A timer pill plus two round buttons (pause + stop), like a recorder. Icons only, big tap targets; resume turns the pause button green.',
+      render: (s) => s==='rec'
+        ? `<div class="row"><div class="pill rec"><span class="dot"></span><span class="time">0:12</span></div><button class="icon-btn" data-act="pause" title="Pause">${I.pause}</button><button class="icon-btn stop" data-act="stop" title="End & review">${I.stop}</button></div>`
+        : `<div class="row"><div class="pill paused"><span class="dot"></span><span class="time">0:12</span><span class="paused-lbl">paused</span></div><button class="icon-btn resume" data-act="resume" title="Resume">${I.play}</button><button class="icon-btn stop" data-act="stop" title="End & review">${I.stop}</button></div>`,
+    },
+    {
+      title: 'C · Pause primary, End quiet',
+      desc: 'Pause is the emphasized mid-session action (labeled button); End is a quiet text link. Good if you pause often.',
+      render: (s) => s==='rec'
+        ? `<div class="pill rec"><span class="dot"></span><span class="time">0:12</span><button class="btn" data-act="pause" style="background:rgba(255,255,255,.12);padding:6px 12px">${I.pause}<span>Pause</span></button><span class="lbl" data-act="stop" style="cursor:pointer;text-decoration:underline;opacity:.7">End</span></div>`
+        : `<div class="pill paused"><span class="dot"></span><span class="time">0:12</span><button class="btn" data-act="resume" style="background:var(--accent);padding:6px 12px">${I.play}<span>Resume</span></button><span class="lbl" data-act="stop" style="cursor:pointer;text-decoration:underline;opacity:.7">End</span></div>`,
+    },
+    {
+      title: 'D · Tap-to-pause pill',
+      desc: 'Minimal: tap the timer area to pause/resume (whole pill is the toggle); a small End sits at the right. Fewest controls; relies on the tooltip/label to teach it.',
+      render: (s) => s==='rec'
+        ? `<div class="pill rec"><button class="btn" data-act="pause" title="Tap to pause" style="gap:10px"><span class="dot"></span><span class="time">0:12</span></button><span class="sep"></span><button class="btn" data-act="stop" title="End & review">${I.stop}</button></div>`
+        : `<div class="pill paused"><button class="btn" data-act="resume" title="Tap to resume" style="gap:10px"><span class="dot"></span><span class="time">0:12</span><span class="paused-lbl">paused · tap to resume</span></button><span class="sep"></span><button class="btn" data-act="stop" title="End & review">${I.stop}</button></div>`,
+    },
+  ];
+
+  const grid = document.getElementById('grid');
+  variations.forEach((v, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<h2>${v.title}</h2><p>${v.desc}</p><div class="stage"></div>
+      <button class="toggle">Toggle recording / paused</button>
+      <span class="state"></span>`;
+    const stage = card.querySelector('.stage');
+    const state = card.querySelector('.state');
+    let s = 'rec';
+    const draw = () => {
+      stage.innerHTML = v.render(s);
+      state.textContent = s === 'rec' ? 'state: recording' : 'state: paused';
+      stage.querySelectorAll('[data-act]').forEach((el) => {
+        el.addEventListener('click', () => {
+          const act = el.getAttribute('data-act');
+          if (act === 'pause') { s = 'paused'; draw(); }
+          else if (act === 'resume') { s = 'rec'; draw(); }
+          else if (act === 'stop') { flash(stage, '→ opens review'); }
+        });
+      });
+    };
+    card.querySelector('.toggle').addEventListener('click', () => { s = s==='rec'?'paused':'rec'; draw(); });
+    draw();
+    grid.appendChild(card);
+  });
+
+  function flash(stage, msg) {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    t.style.cssText = 'position:absolute;margin-top:-52px;background:#0f172a;color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.4)';
+    stage.appendChild(t);
+    setTimeout(() => t.remove(), 900);
+  }
+</script>
+</body>
+</html>

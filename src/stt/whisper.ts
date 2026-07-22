@@ -1,4 +1,10 @@
 import type { STTCallbacks, STTProvider } from '../types'
+import type { Transcriber } from '@huggingface/transformers'
+
+// Load each model once per page and reuse it across sessions/providers. Keyed by
+// model id + device so switching either rebuilds; a rejected load is evicted so
+// it can be retried.
+const modelCache = new Map<string, Promise<Transcriber>>()
 
 export interface WhisperOptions {
   /** ONNX Whisper model id (default 'onnx-community/whisper-base.en'). */
@@ -32,7 +38,7 @@ const TARGET_RATE = 16000
 export class WhisperProvider implements STTProvider {
   readonly name = 'whisper'
 
-  private transcriber: unknown = null
+  private transcriber: Transcriber | null = null
   private stream: MediaStream | null = null
   private ctx: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
@@ -104,49 +110,21 @@ export class WhisperProvider implements STTProvider {
     cb.onReady?.()
   }
 
-  private async loadModel(cb: STTCallbacks): Promise<unknown> {
-    let transformers: typeof import('@huggingface/transformers')
-    try {
-      transformers = await import('@huggingface/transformers')
-    } catch {
-      cb.onNotice?.('Local speech model not installed — capturing clicks only.')
-      throw new Error('feedbasha: @huggingface/transformers is not installed')
-    }
-
+  /** Return the shared, memoized transcriber — built once per model+device. */
+  private loadModel(cb: STTCallbacks): Promise<Transcriber> {
     const model = this.opts.model ?? DEFAULT_MODEL
-    const wantGpu =
-      (this.opts.device ?? 'auto') !== 'wasm' &&
-      typeof navigator !== 'undefined' &&
-      'gpu' in navigator
+    const device = this.opts.device ?? 'auto'
+    const wantGpu = device !== 'wasm' && typeof navigator !== 'undefined' && 'gpu' in navigator
     this.interimEnabled = this.opts.interim ?? wantGpu
 
-    let lastPct = -1
-    const progress = (p: { status?: string; progress?: number }) => {
-      if (!this.running) return
-      if (p?.status === 'progress' && typeof p.progress === 'number') {
-        const pct = Math.round(p.progress)
-        if (pct !== lastPct) {
-          lastPct = pct
-          cb.onProgress?.(`Loading speech model… ${pct}%`)
-        }
-      }
-    }
+    const key = `${model}|${device}`
+    const cached = modelCache.get(key)
+    if (cached) return cached
 
-    const build = (device: 'webgpu' | 'wasm') =>
-      transformers.pipeline('automatic-speech-recognition', model, {
-        device,
-        progress_callback: progress,
-      })
-
-    if (wantGpu) {
-      try {
-        return await build('webgpu')
-      } catch {
-        // WebGPU does not auto-fall-back; retry on WASM explicitly.
-        if (!this.running) return null
-      }
-    }
-    return build('wasm')
+    const p = buildPipeline(model, wantGpu, cb)
+    modelCache.set(key, p)
+    void p.catch(() => modelCache.delete(key)) // allow retry after a failed load
+    return p
   }
 
   private onAudio(frame: Float32Array): void {
@@ -230,7 +208,7 @@ export class WhisperProvider implements STTProvider {
   }
 
   private async run(audio: Float32Array, emit: (text: string) => void): Promise<void> {
-    const t = this.transcriber as ((a: Float32Array) => Promise<{ text?: string }>) | null
+    const t = this.transcriber
     if (!t || audio.length === 0) return
     this.busy = true
     try {
@@ -261,6 +239,18 @@ export class WhisperProvider implements STTProvider {
     this.frames = []
     await Promise.allSettled(this.pending)
     this.teardownAudio()
+  }
+
+  pause(): void {
+    // Suspend the audio graph (mic frames stop flowing) and drop any partial
+    // utterance so it doesn't span the gap.
+    this.frames = []
+    this.speaking = false
+    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend()
+  }
+
+  resume(): void {
+    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume()
   }
 
   dispose(): void {
@@ -295,6 +285,47 @@ export class WhisperProvider implements STTProvider {
     this.ctx = null
     this.stream = null
   }
+}
+
+/** Build a transcriber pipeline (dynamic import + WebGPU→WASM fallback). */
+async function buildPipeline(
+  model: string,
+  wantGpu: boolean,
+  cb: STTCallbacks,
+): Promise<Transcriber> {
+  let transformers: typeof import('@huggingface/transformers')
+  try {
+    transformers = await import('@huggingface/transformers')
+  } catch {
+    cb.onNotice?.('Local speech model not installed — capturing clicks only.')
+    throw new Error('feedbasha: @huggingface/transformers is not installed')
+  }
+
+  let lastPct = -1
+  const progress = (p: { status?: string; progress?: number }) => {
+    if (p?.status === 'progress' && typeof p.progress === 'number') {
+      const pct = Math.round(p.progress)
+      if (pct !== lastPct) {
+        lastPct = pct
+        cb.onProgress?.(`Loading speech model… ${pct}%`)
+      }
+    }
+  }
+
+  const build = (device: 'webgpu' | 'wasm') =>
+    transformers.pipeline('automatic-speech-recognition', model, {
+      device,
+      progress_callback: progress,
+    })
+
+  if (wantGpu) {
+    try {
+      return await build('webgpu')
+    } catch {
+      // WebGPU does not auto-fall-back; retry on WASM explicitly.
+    }
+  }
+  return build('wasm')
 }
 
 function rms(frame: Float32Array): number {

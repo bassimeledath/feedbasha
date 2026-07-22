@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>feedbasha · "or switch to text"</title>
+<style>
+  :root { --accent:#0e9f6e; --ink:#0f172a; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:#f1f5f9; -webkit-font-smoothing:antialiased;
+  }
+  header { padding:34px 32px 8px; max-width:1080px; margin:0 auto; }
+  header h1 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
+  header p { margin:0; color:#64748b; font-size:14px; max-width:660px; line-height:1.55; }
+  header p b { color:#334155; }
+  .grid {
+    max-width:1080px; margin:0 auto; padding:24px 32px 40px;
+    display:grid; grid-template-columns:repeat(2,1fr); gap:20px;
+  }
+  @media (max-width:860px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid #e5e8ee; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  .card .head { padding:16px 18px 12px; border-bottom:1px solid #eef2f6; }
+  .card .tag {
+    display:inline-block; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--accent); background:#effaf4; padding:3px 8px; border-radius:999px; margin-bottom:8px;
+  }
+  .card h2 { margin:0 0 4px; font-size:15.5px; }
+  .card .desc { margin:0; font-size:13px; color:#64748b; line-height:1.5; }
+  .card .desc b { color:#334155; font-weight:650; }
+  .stage {
+    position:relative; height:250px;
+    background:
+      radial-gradient(1200px 240px at 50% -60%, #e2e8f0, transparent),
+      repeating-linear-gradient(0deg,#fafbfc 0 27px,#f4f6f9 27px 28px);
+  }
+  .fakeapp {
+    position:absolute; inset:14px; border:1px dashed #cbd5e1; border-radius:10px;
+    color:#94a3b8; font-size:11.5px; padding:8px 10px; user-select:none;
+  }
+  .fakeapp .row { display:flex; gap:6px; margin-top:6px; }
+  .fakeapp .box { background:#eef2f6; border-radius:6px; height:18px; flex:1; }
+  .foot { padding:12px 18px 16px; font-size:12.5px; color:#475569; line-height:1.5; }
+  .foot .k { color:var(--accent); font-weight:700; }
+
+  .dock { position:absolute; right:18px; bottom:18px; }
+  .glass {
+    background:rgba(15,23,42,.82); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.14); color:#fff; box-shadow:0 10px 30px rgba(15,23,42,.35);
+  }
+  .bubble {
+    width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; transition:transform .15s;
+  }
+  .bubble:hover { transform:translateY(-2px); }
+  .bubble svg { width:24px; height:24px; }
+
+  /* the hover caption — shared concept, placed BELOW the bubble */
+  .hoverwrap { position:relative; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .cap {
+    opacity:0; transform:translateY(-4px); transition:.16s; pointer-events:none;
+    font-size:12px; white-space:nowrap; cursor:pointer;
+  }
+  .hoverwrap:hover .cap { opacity:1; transform:none; pointer-events:auto; }
+
+  /* variant 1: pill caption */
+  .cap.pill {
+    color:#fff; background:rgba(15,23,42,.82); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:6px 12px; font-weight:600;
+    box-shadow:0 8px 22px rgba(15,23,42,.3);
+  }
+  .cap.pill b { color:#7dd3fc; }
+  .cap.pill:hover { outline:1px solid rgba(255,255,255,.25); }
+
+  /* variant 2: plain link caption on a soft chip */
+  .cap.link {
+    color:#334155; background:#fff; border:1px solid #e5e8ee; border-radius:8px; padding:5px 10px;
+    box-shadow:0 6px 18px rgba(15,23,42,.12); font-weight:500;
+  }
+  .cap.link u { color:var(--accent); font-weight:700; text-decoration:none; }
+  .cap.link:hover u { text-decoration:underline; }
+
+  /* variant 3: icon + text, minimal, no chip */
+  .cap.bare { display:inline-flex; align-items:center; gap:6px; color:#475569; font-weight:600; }
+  .cap.bare svg { width:14px; height:14px; color:var(--accent); }
+  .cap.bare:hover { color:var(--ink); }
+
+  /* variant 4: appears ABOVE with a downward tail, tooltip feel */
+  .hoverwrap.above { flex-direction:column-reverse; }
+
+  .legend { max-width:1080px; margin:0 auto; padding:0 32px 70px; }
+  .legend .box { background:#fff; border:1px solid #e5e8ee; border-radius:14px; padding:18px 20px; }
+  .legend h3 { margin:0 0 10px; font-size:14px; }
+  .legend p { margin:0 0 8px; font-size:13px; color:#475569; line-height:1.6; }
+  .legend .pick { color:var(--accent); font-weight:700; }
+  .composer { width:250px; border-radius:14px; overflow:hidden; background:#fff; color:var(--ink); border:1px solid #e5e8ee; box-shadow:0 16px 40px rgba(15,23,42,.22); }
+  .composer .ch { display:flex; align-items:center; gap:7px; padding:9px 11px; border-bottom:1px solid #eef2f6; }
+  .composer .badge { width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .composer .src { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:#065f46; background:#effaf4; border-radius:5px; padding:2px 6px; }
+  .composer textarea { width:100%; border:0; resize:none; padding:10px 11px; font:inherit; font-size:12.5px; outline:none; min-height:52px; color:var(--ink); }
+  .composer .cf { display:flex; justify-content:flex-end; padding:8px 10px; border-top:1px solid #eef2f6; }
+  .composer .add { border:0; background:var(--accent); color:#fff; font-weight:650; font-size:12px; border-radius:8px; padding:7px 13px; cursor:pointer; }
+  .modechip { position:absolute; left:14px; bottom:14px; font-size:11px; font-weight:700; letter-spacing:.04em; padding:5px 10px; border-radius:999px; background:#fff; border:1px solid #e5e8ee; color:#475569; }
+  kbd { font-family:ui-monospace,Menlo,monospace; font-size:11px; background:#f1f5f9; border:1px solid #e2e8f0; border-bottom-width:2px; border-radius:5px; padding:1px 5px; color:#334155; }
+</style>
+</head>
+<body>
+<header>
+  <h1>feedbasha · hover the mic → "or switch to text"</h1>
+  <p>Same idea in four flavors: the resting widget is just the mic (voice = one click). <b>On hover, a small
+     "switch to text" prompt fades in below it.</b> Hover each bubble to see the caption; click the caption to enter text mode.</p>
+</header>
+
+<div class="grid">
+
+  <!-- V1 -->
+  <div class="card">
+    <div class="head"><span class="tag">V1 · recommended</span><h2>Dark pill below</h2>
+      <p class="desc">Matches the recording pill's glass look. Reads <b>"or switch to <span style="color:#0ea5e9">text</span>"</b>, the word "text" tinted so it's obviously the action.</p></div>
+    <div class="stage">
+      <div class="fakeapp">your app<div class="row"><div class="box"></div><div class="box"></div></div></div>
+      <div class="dock"><div class="hoverwrap">
+        <div class="bubble glass" onclick="startVoice('V1')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </div>
+        <div class="cap pill" onclick="startText('V1')">or switch to <b>text</b></div>
+      </div></div>
+    </div>
+    <div class="foot"><span class="k">Hover the mic.</span> Caption fades in below; click it for text mode.</div>
+  </div>
+
+  <!-- V2 -->
+  <div class="card">
+    <div class="head"><span class="tag">V2</span><h2>Light chip, underlined link</h2>
+      <p class="desc">A white chip with an underlined <b>text</b> link. Lighter/more app-native than the dark pill; contrasts nicely against dark UIs.</p></div>
+    <div class="stage">
+      <div class="fakeapp">your app<div class="row"><div class="box"></div><div class="box"></div></div></div>
+      <div class="dock"><div class="hoverwrap">
+        <div class="bubble glass" onclick="startVoice('V2')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </div>
+        <div class="cap link" onclick="startText('V2')">or <u>switch to text</u></div>
+      </div></div>
+    </div>
+    <div class="foot"><span class="k">Hover the mic.</span> Feels like a quiet secondary link.</div>
+  </div>
+
+  <!-- V3 -->
+  <div class="card">
+    <div class="head"><span class="tag">V3</span><h2>Bare label + pencil icon</h2>
+      <p class="desc">No chip at all — just a ✎ icon and words floating under the bubble. The most minimal; leans on the icon to signal "typing".</p></div>
+    <div class="stage">
+      <div class="fakeapp">your app<div class="row"><div class="box"></div><div class="box"></div></div></div>
+      <div class="dock"><div class="hoverwrap">
+        <div class="bubble glass" onclick="startVoice('V3')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </div>
+        <div class="cap bare" onclick="startText('V3')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          switch to text
+        </div>
+      </div></div>
+    </div>
+    <div class="foot"><span class="k">Hover the mic.</span> Cleanest, but the chip-less label can be low-contrast on busy pages.</div>
+  </div>
+
+  <!-- V4 -->
+  <div class="card">
+    <div class="head"><span class="tag">V4</span><h2>Two-line hint</h2>
+      <p class="desc">Names the default action too — a tiny "🎤 Voice" line with "or switch to text" beneath. Most self-explanatory for first-time users, slightly heavier.</p></div>
+    <div class="stage">
+      <div class="fakeapp">your app<div class="row"><div class="box"></div><div class="box"></div></div></div>
+      <div class="dock"><div class="hoverwrap">
+        <div class="bubble glass" onclick="startVoice('V4')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </div>
+        <div class="cap pill" style="text-align:center;line-height:1.5;padding:7px 13px" onclick="startText('V4')">
+          <div style="opacity:.7;font-size:11px">Click to talk</div>
+          or switch to <b>text</b>
+        </div>
+      </div></div>
+    </div>
+    <div class="foot"><span class="k">Hover the mic.</span> Teaches both actions at once.</div>
+  </div>
+
+</div>
+
+<div class="legend">
+  <div class="box">
+    <h3>What happens after "switch to text" (all variants)</h3>
+    <p>The mic never turns on. Cursor → crosshair, elements highlight on hover (react-grab style). Click an element → a composer
+       pops beside it with <kbd>Component · file:line</kbd> and a note box. Type → <b>Add</b> → it lands in the same
+       chronological log as voice. The live pill then shows a text-mode state instead of a timer.</p>
+    <div class="stage" style="height:180px;border:1px solid #e5e8ee;border-radius:12px;margin-top:12px;background:#fff">
+      <div style="position:absolute;left:24px;top:26px;width:150px;height:36px;border:2px solid var(--accent);border-radius:8px;background:rgba(14,159,110,.08)"></div>
+      <div style="position:absolute;left:24px;top:18px;width:22px;height:22px;margin:-11px 0 0 -11px;background:var(--accent);color:#fff;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">3</div>
+      <div class="composer" style="position:absolute;left:190px;top:20px">
+        <div class="ch"><span class="badge">3</span><span class="src">PriceCard · Price.tsx:42</span></div>
+        <textarea placeholder="Add a note…">this padding feels too tight on mobile</textarea>
+        <div class="cf"><button class="add">Add ▸</button></div>
+      </div>
+      <div class="modechip">✎ TEXT MODE</div>
+    </div>
+    <p style="margin-top:14px"><span class="pick">My pick: V1.</span> The dark pill matches the recording pill you already have, "text" is tinted so the action is unmistakable, and it stays invisible until hover so the resting widget is still just a mic. V2 is the strong runner-up if you'd rather it read as a lighter, app-native link.</p>
+  </div>
+</div>
+
+<script>
+  function toast(msg){
+    const t=document.createElement('div');
+    t.textContent=msg;
+    t.style.cssText='position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#0f172a;color:#fff;padding:11px 18px;border-radius:12px;font:13px -apple-system,sans-serif;box-shadow:0 14px 40px rgba(15,23,42,.45);z-index:99';
+    document.body.appendChild(t); setTimeout(()=>t.remove(),1400);
+  }
+  function startVoice(v){ toast('🎤 '+v+': voice recording started'); }
+  function startText(v){ toast('✎ '+v+': text mode — click an element to annotate'); }
+</script>
+</body>
+</html>

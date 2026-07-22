@@ -10,8 +10,9 @@ function actionLine(ev: ActionEvent): string {
         s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
       }`
     : ` — ${el.selector ?? el.outerHTMLSnippet}`
-  const txt = el.text ? ` — "${el.text}"` : ''
-  return `[${fmtTime(ev.t)}] → #${ev.n} ${label}${src}${txt}`
+  const note = ev.note ? ` — "${ev.note}"` : ''
+  const txt = !ev.note && el.text ? ` — "${el.text}"` : ''
+  return `[${fmtTime(ev.t)}] → #${ev.n} ${label}${src}${note}${txt}`
 }
 
 /**

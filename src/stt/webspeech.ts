@@ -137,6 +137,25 @@ export class WebSpeechProvider implements STTProvider {
     })
   }
 
+  pause(): void {
+    this.running = false // stops the onend auto-restart
+    try {
+      this.rec?.stop()
+    } catch {
+      /* noop */
+    }
+  }
+
+  resume(): void {
+    if (!this.rec) return
+    this.running = true
+    try {
+      this.rec.start()
+    } catch {
+      /* noop */
+    }
+  }
+
   dispose(): void {
     this.running = false
     const rec = this.rec

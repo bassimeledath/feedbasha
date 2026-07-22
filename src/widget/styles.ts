@@ -9,9 +9,19 @@ export const CSS = `
 .fb-spotlight{position:fixed;border:2px solid var(--accent);border-radius:8px;pointer-events:none;display:none;z-index:2;box-shadow:0 0 0 100vmax rgba(15,23,42,.5),0 0 14px 1px rgba(14,159,110,.55)}
 .fb-pin{position:fixed;width:22px;height:22px;margin:-11px 0 0 -11px;background:var(--accent);color:#fff;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;box-shadow:0 2px 8px rgba(14,159,110,.5);pointer-events:none;z-index:2}
 
-.fb-widget{position:fixed;z-index:5;pointer-events:auto}
+.fb-widget{position:fixed;z-index:5;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-end;gap:9px}
 .fb-widget.pos-br{right:22px;bottom:22px}
-.fb-widget.pos-bl{left:22px;bottom:22px}
+.fb-widget.pos-bl{left:22px;bottom:22px;align-items:flex-start}
+
+/* "or switch to text" — fades in above the mic on hover, idle only. */
+.fb-switch{order:-1;display:none;align-items:center;gap:0;background:rgba(15,23,42,.82);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:12px;font-weight:600;
+  white-space:nowrap;cursor:pointer;box-shadow:0 8px 22px rgba(15,23,42,.3);opacity:0;transform:translateY(4px);
+  transition:opacity .16s,transform .16s;pointer-events:none}
+.fb-switch b{color:#7dd3fc;font-weight:700;margin-left:4px}
+.fb-widget.can-switch .fb-switch{display:inline-flex}
+.fb-widget.can-switch:hover .fb-switch{opacity:1;transform:none;pointer-events:auto}
+.fb-switch:hover{outline:1px solid rgba(255,255,255,.25)}
 .fb-bubble{position:relative;width:56px;height:56px;border-radius:50%;cursor:pointer;background:rgba(15,23,42,.72);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.35);transition:transform .15s}
 .fb-bubble:hover{transform:translateY(-2px)}
 .fb-bubble.has-review::after{content:'';position:absolute;top:-1px;right:-1px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 3px rgba(15,23,42,.4)}
@@ -19,11 +29,34 @@ export const CSS = `
 .fb-bubble svg{width:24px;height:24px}
 .fb-spinner{width:22px;height:22px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:fb-spin .8s linear infinite}
 @keyframes fb-spin{to{transform:rotate(360deg)}}
-.fb-pill{display:none;align-items:center;gap:12px;cursor:pointer;background:rgba(15,23,42,.82);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:10px 16px 10px 14px;box-shadow:0 10px 30px rgba(15,23,42,.35)}
-.fb-dot{width:10px;height:10px;border-radius:50%;background:#ff5d5d;animation:fb-pulse 1.4s infinite}
+.fb-pill{display:none;align-items:center;gap:8px;background:rgba(15,23,42,.82);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:6px 8px;box-shadow:0 10px 30px rgba(15,23,42,.35)}
+.fb-dot{width:10px;height:10px;border-radius:50%;background:#ff5d5d}
+.fb-pill:not(.paused):not(.text) .fb-dot{animation:fb-pulse 1.4s infinite}
+.fb-pill.paused .fb-dot{background:#f5a623}
+/* Text mode: no mic, so the dot goes calm teal and a small "text" label shows. */
+.fb-pill.text .fb-dot{background:#38bdf8;animation:none}
+.fb-modelbl{font-size:11px;color:#7dd3fc;font-weight:600}
 @keyframes fb-pulse{0%{box-shadow:0 0 0 0 rgba(255,93,93,.55)}70%{box-shadow:0 0 0 9px rgba(255,93,93,0)}100%{box-shadow:0 0 0 0 rgba(255,93,93,0)}}
 .fb-time{font-variant-numeric:tabular-nums;font-weight:600;font-size:14px}
-.fb-endlbl{font-size:12px;opacity:.8;border-left:1px solid rgba(255,255,255,.18);padding-left:12px}
+.fb-pstate{font-size:11px;color:#f5a623;font-weight:600}
+.fb-pctl{display:inline-flex;align-items:center;gap:5px;background:transparent;border:0;color:#fff;font:inherit;font-size:12px;cursor:pointer;padding:5px 8px;border-radius:999px}
+.fb-pctl:hover{background:rgba(255,255,255,.14)}
+.fb-pctl svg{width:14px;height:14px}
+.fb-vsep{width:1px;align-self:stretch;background:rgba(255,255,255,.18);margin:3px 0}
+
+/* Text-mode composer: react-grab-style note box anchored to the clicked element. */
+.fb-composer{position:fixed;z-index:6;width:260px;max-width:calc(100vw - 24px);background:#fff;color:#0f172a;border:1px solid #e5e8ee;border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.22);pointer-events:auto;cursor:auto;display:none;overflow:hidden}
+.fb-chead{display:flex;align-items:center;gap:7px;padding:9px 11px;border-bottom:1px solid #eef2f6}
+.fb-cbadge{width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.fb-cbadge svg{width:11px;height:11px}
+.fb-csrc{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#065f46;background:#effaf4;border-radius:5px;padding:2px 6px;word-break:break-all}
+.fb-ctext{width:100%;border:0;resize:none;padding:10px 11px;font:inherit;font-size:12.5px;line-height:1.5;outline:none;min-height:56px;color:#0f172a}
+.fb-cfoot{display:flex;justify-content:flex-end;gap:8px;padding:8px 10px;border-top:1px solid #eef2f6}
+.fb-ccancel{border:0;background:transparent;color:#94a3b8;font-size:12px;cursor:pointer;padding:7px 10px;border-radius:8px}
+.fb-ccancel:hover{color:#0f172a}
+.fb-cadd{border:0;background:var(--accent);color:#fff;font-weight:650;font-size:12px;border-radius:8px;padding:7px 13px;cursor:pointer}
+.fb-cadd:hover{filter:brightness(1.05)}
+.fb-cadd:disabled{opacity:.5;cursor:default;filter:none}
 
 .fb-caption{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:4;max-width:min(680px,90vw);background:rgba(15,23,42,.86);backdrop-filter:blur(12px);color:#fff;border-radius:12px;padding:12px 16px;box-shadow:0 12px 34px rgba(15,23,42,.4);font-size:15px;line-height:1.5;pointer-events:none;display:none}
 .fb-caption .lbl{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.55;margin-bottom:3px}

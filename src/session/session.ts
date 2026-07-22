@@ -41,9 +41,17 @@ export class Session {
   private pending: Promise<void>[] = []
 
   private reselectId: number | null = null
+  private paused = false
   private pendingReview = false // review was closed to idle but kept for reopening
   private lastX = -1
   private lastY = -1
+
+  private mode: CaptureMode = 'voice'
+  // Text-mode compose state: the element being annotated + its (resolving) context.
+  private composing = false
+  private composeEl: Element | null = null
+  private composeCtx: ElementContext | null = null
+  private composeCtxPromise: Promise<ElementContext> | null = null
 
   private onMove = (e: MouseEvent) => this.handleMove(e)
   private onClick = (e: MouseEvent) => this.handleClick(e)
@@ -64,7 +72,9 @@ export class Session {
   constructor(private config: FeedbashaConfig) {
     this.widget = new Widget(config.position ?? 'bottom-right', config.dock ?? true, {
       onStart: () => void this.start(),
+      onStartText: () => this.startText(),
       onStop: () => void this.stop(),
+      onTogglePause: () => this.togglePause(),
       onResume: () => void this.resume(),
       onClose: () => this.closeReview(),
       onCopy: () => void this.copy(),
@@ -74,7 +84,10 @@ export class Session {
       onReorder: (ids) => this.reorder(ids),
       onReselect: (id) => this.beginReselect(id),
       onHover: (id, on) => this.hoverElement(id, on),
+      onComposeAdd: (text) => this.commitCompose(text),
+      onComposeCancel: () => this.cancelCompose(),
     })
+    this.widget.setCanSwitch(true) // offer "or switch to text" at idle
   }
 
   private clock = (): number =>
@@ -92,6 +105,29 @@ export class Session {
     await this.arm()
   }
 
+  /** Begin a text-mode session: no mic — click an element, type a note. */
+  startText(): void {
+    if (this.phase !== 'idle' || this.destroyed) return
+    if (this.pendingReview) {
+      this.reopenReview()
+      return
+    }
+    this.startedWall = Date.now()
+    this.accumSec = 0
+    this.enterText()
+  }
+
+  /** Enter (or resume) text-mode recording — the mic-free capture path. */
+  private enterText(): void {
+    this.runToken++ // supersede any in-flight async
+    this.provider?.dispose()
+    this.provider = null
+    this.phase = 'starting'
+    this.widget.enableYield(false)
+    this.widget.setPhase('starting')
+    this.beginRecording('text')
+  }
+
   /** Close the review to the idle bubble, keeping the session so the mic can
    *  reopen it (distinct from "start a new session", which discards it). */
   private closeReview(): void {
@@ -102,6 +138,7 @@ export class Session {
     this.widget.enableYield(false)
     this.widget.setPinsVisible(false)
     this.widget.setBubbleReopen(true)
+    this.widget.setCanSwitch(false)
     this.widget.setPhase('idle')
   }
 
@@ -114,9 +151,13 @@ export class Session {
     this.widget.enableYield(true)
   }
 
-  /** Return to recording after review, keeping the existing log. */
+  /** Return to recording after review, keeping the existing log and mode. */
   async resume(): Promise<void> {
     if (this.phase !== 'review' || this.destroyed) return
+    if (this.mode === 'text') {
+      this.enterText()
+      return
+    }
     await this.arm()
   }
 
@@ -173,10 +214,11 @@ export class Session {
             armTimeout(120000, 'Speech model took too long — capturing clicks only.')
           },
           onInterim: (t) => {
-            if (token === this.runToken && this.phase === 'recording') this.widget.setCaption(t)
+            if (token === this.runToken && this.phase === 'recording' && !this.paused)
+              this.widget.setCaption(t)
           },
           onSegment: (s) => {
-            if (token === this.runToken) {
+            if (token === this.runToken && !this.paused) {
               this.events.push({ id: ++this.seq, kind: 'speech', t: s.t, text: s.text })
             }
           },
@@ -202,10 +244,13 @@ export class Session {
       this.provider = null
     }
     this.phase = 'recording'
+    this.mode = mode
+    this.paused = false
     this.spanStart = performance.now()
     this.spanActive = true
     this.widget.setPhase('recording')
     this.widget.setMode(mode)
+    this.widget.setPaused(false)
     if (notice) this.widget.setNotice(notice)
 
     this.prevCursor = document.body.style.cursor
@@ -221,6 +266,36 @@ export class Session {
     window.addEventListener('scroll', this.onScroll, true)
     window.addEventListener('resize', this.onScroll, true)
     window.addEventListener('keydown', this.onKey, true)
+  }
+
+  private togglePause(): void {
+    if (this.phase !== 'recording') return
+    if (this.paused) this.resumeCapture()
+    else this.pauseCapture()
+  }
+
+  /** Hold capture without ending: freeze the clock, silence the provider, and
+   *  let the user interact with the app until they resume. */
+  private pauseCapture(): void {
+    if (this.composing) this.cancelCompose()
+    this.paused = true
+    if (this.spanActive) {
+      this.accumSec += (performance.now() - this.spanStart) / 1000
+      this.spanActive = false
+    }
+    this.provider?.pause?.()
+    this.widget.highlight(null)
+    document.body.style.cursor = this.prevCursor ?? ''
+    this.widget.setPaused(true)
+  }
+
+  private resumeCapture(): void {
+    this.paused = false
+    this.spanStart = performance.now()
+    this.spanActive = true
+    this.provider?.resume?.()
+    document.body.style.cursor = 'crosshair'
+    this.widget.setPaused(false)
   }
 
   private switchToClickOnly(msg: string): void {
@@ -274,6 +349,11 @@ export class Session {
    *  Called on mousemove and on scroll/resize so the box never goes stale. */
   private refreshHover(): void {
     if (this.lastX < 0) return
+    if (this.composing) return // highlight stays locked on the element being annotated
+    if (this.paused && this.reselectId == null) {
+      this.widget.highlight(null)
+      return
+    }
     const el = this.pick(this.lastX, this.lastY)
     const rect = el ? rectOf(el) : null
     // Reselect uses the dramatic spotlight; live recording uses the calm border.
@@ -282,6 +362,7 @@ export class Session {
   }
 
   private handlePointerDown(e: Event): void {
+    if (this.paused) return // paused: let the user interact with the app normally
     const me = e as MouseEvent
     const el = this.pick(me.clientX, me.clientY)
     if (!el) return // let interactions with our own widget through
@@ -291,11 +372,18 @@ export class Session {
   }
 
   private handleClick(e: MouseEvent): void {
-    if (this.phase !== 'recording') return
+    if (this.phase !== 'recording' || this.paused) return
+    if (this.composing) return // locked on the current element until Add/Cancel
     const el = this.pick(e.clientX, e.clientY)
     if (!el) return
     e.preventDefault()
     e.stopImmediatePropagation()
+
+    // Text mode: open a note composer instead of pinning immediately.
+    if (this.mode === 'text') {
+      this.beginCompose(el)
+      return
+    }
 
     // Append an action event to the log; fill its element context async.
     const id = ++this.seq
@@ -319,7 +407,96 @@ export class Session {
     )
   }
 
+  // ---- Text mode: click an element, type a note (react-grab style) ----
+
+  /** Open the composer on the clicked element and start resolving its context. */
+  private beginCompose(el: Element): void {
+    this.composing = true
+    this.composeEl = el
+    const rect = rectOf(el)
+    this.composeCtx = placeholder(el, rect)
+    this.widget.highlight(rect) // freeze the highlight on the target
+    this.widget.openComposer(rect, headerFor(this.composeCtx))
+
+    const token = this.runToken
+    this.composeCtxPromise = buildElementContext(el)
+      .then((ctx) => {
+        if (token === this.runToken && !this.destroyed) {
+          this.composeCtx = ctx
+          this.widget.setComposerHeader(headerFor(ctx))
+        }
+        return ctx
+      })
+      .catch(() => this.composeCtx ?? placeholder(el, rect))
+  }
+
+  /** Commit the typed note as an action event with an attached annotation. */
+  private commitCompose(text: string): void {
+    if (!this.composing || !this.composeEl) return
+    const clean = text.trim()
+    if (!clean) {
+      this.cancelCompose()
+      return
+    }
+    const el = this.composeEl
+    const id = ++this.seq
+    const n = ++this.actionSeq
+    const t = this.clock()
+    const rect = rectOf(el)
+    const ev: ActionEvent = {
+      id,
+      kind: 'action',
+      t,
+      n,
+      element: this.composeCtx ?? placeholder(el, rect),
+      note: clean,
+    }
+    this.events.push(ev)
+    this.liveEls.set(id, el)
+    this.widget.addPin(id, n, rect)
+
+    // If the context is still resolving, patch the event's element when it lands.
+    const token = this.runToken
+    const p = this.composeCtxPromise
+    if (p) {
+      this.pending.push(
+        p
+          .then((ctx) => {
+            if (token === this.runToken && !this.destroyed) ev.element = ctx
+          })
+          .catch(() => {
+            /* keep placeholder */
+          }),
+      )
+    }
+    this.endCompose()
+  }
+
+  private cancelCompose(): void {
+    if (!this.composing) return
+    this.endCompose()
+  }
+
+  private endCompose(): void {
+    this.composing = false
+    this.composeEl = null
+    this.composeCtx = null
+    this.composeCtxPromise = null
+    this.widget.closeComposer()
+    this.widget.highlight(null)
+    this.refreshHover() // re-enable hover highlight at the cursor
+  }
+
   private handleKey(e: KeyboardEvent): void {
+    if (this.composing) {
+      // Esc cancels the composer; every other key belongs to the note textarea.
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        this.cancelCompose()
+      }
+      return
+    }
     if (e.key === 'Escape') {
       e.preventDefault()
       void this.stop()
@@ -352,10 +529,12 @@ export class Session {
 
   async stop(): Promise<void> {
     if (this.phase !== 'recording') return
+    if (this.composing) this.endCompose()
     const token = this.runToken
     this.endedSec = this.clock()
     this.accumSec = this.endedSec // freeze elapsed; resume continues from here
     this.spanActive = false
+    this.paused = false
     this.teardownRecording()
     this.phase = 'review'
     this.widget.setPhase('review')
@@ -386,7 +565,9 @@ export class Session {
 
   private editEvent(id: number, text: string): void {
     const ev = this.events.find((e) => e.id === id)
-    if (ev && ev.kind === 'speech') ev.text = text
+    if (!ev) return
+    if (ev.kind === 'speech') ev.text = text
+    else if (ev.note != null) ev.note = text // editable text-mode annotation
     // No re-render: keeps the caret where the user is typing.
   }
 
@@ -512,6 +693,7 @@ export class Session {
 
   reset(): void {
     this.runToken++ // invalidate any in-flight async
+    if (this.composing) this.endCompose()
     if (this.reselectId != null) this.endReselect()
     if (this.startupTimeout != null) {
       window.clearTimeout(this.startupTimeout)
@@ -524,6 +706,8 @@ export class Session {
     this.widget.clearPins()
     this.widget.setPinsVisible(true)
     this.widget.setBubbleReopen(false)
+    this.widget.setCanSwitch(true)
+    this.mode = 'voice'
     this.events = []
     this.liveEls.clear()
     this.pending = []
@@ -532,6 +716,7 @@ export class Session {
     this.accumSec = 0
     this.spanActive = false
     this.endedSec = 0
+    this.paused = false
     this.pendingReview = false
     this.phase = 'idle'
     this.widget.setPhase('idle')
@@ -591,6 +776,16 @@ function placeholder(
 ): ElementContext {
   const tag = el.tagName.toLowerCase()
   return { componentTree: [], tag, attributes: {}, rect, outerHTMLSnippet: tag }
+}
+
+/** Compact "Component · file:line" label shown in the text-mode composer. */
+function headerFor(ctx: ElementContext): string {
+  const label = ctx.component ?? `<${ctx.tag}>`
+  const s = ctx.source
+  const ref = s
+    ? `${s.fileName}${s.lineNumber != null ? `:${s.lineNumber}` : ''}`
+    : (ctx.selector ?? ctx.outerHTMLSnippet)
+  return `${label} · ${ref}`
 }
 
 function isEditable(el: Element | null): boolean {

@@ -70,6 +70,8 @@ export interface ActionEvent {
   /** Display ordinal shown on the on-screen pin and the review card. */
   n: number
   element: ElementContext
+  /** Typed annotation attached at selection time (text mode); editable in review. */
+  note?: string
 }
 
 export interface SessionResult {
@@ -109,5 +111,8 @@ export interface STTProvider {
   start(cb: STTCallbacks, clock: () => number): Promise<void>
   /** Stop capturing; resolves once all final segments have been emitted. */
   stop(): Promise<void>
+  /** Optional: temporarily halt capture without ending (for pause/resume). */
+  pause?(): void
+  resume?(): void
   dispose(): void
 }
