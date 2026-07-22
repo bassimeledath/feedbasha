@@ -17,8 +17,9 @@ export interface FeedbashaConfig {
   stt?: STTOptions
   /** Widget corner. Default 'bottom-right'. */
   position?: 'bottom-right' | 'bottom-left'
-  /** Shrink the page while the review panel is open so it never overlaps your
-   *  app (default true). Set false to keep the panel as a pure overlay. */
+  /** While the review panel is open, let it yield to the app: fade out and
+   *  become click-through whenever the cursor is over the app, so the whole app
+   *  stays visible and usable (default true). Set false for a static overlay. */
   dock?: boolean
   /** Called after the user copies. `markdown` is redacted; `session` is raw local data. */
   onCopy?: (markdown: string, session: SessionResult) => void
@@ -94,8 +95,11 @@ export interface STTCallbacks {
   onInterim?: (text: string) => void
   /** A finalized, timestamped segment. */
   onSegment?: (seg: STTSegmentEvent) => void
-  /** Non-fatal status/notice (e.g. "mic blocked"). */
+  /** Non-fatal status/notice that degrades to click-only (e.g. "mic blocked"). */
   onNotice?: (message: string) => void
+  /** Slow-startup progress (e.g. model download) — keeps the session waiting
+   *  instead of falling back. */
+  onProgress?: (message: string) => void
 }
 
 export interface STTProvider {

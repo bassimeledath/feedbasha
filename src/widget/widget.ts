@@ -83,6 +83,7 @@ export class Widget {
   private host: HTMLElement
   private pins = new Map<number, HTMLElement>()
   private dragEl: HTMLElement | null = null
+  private yielded = false
 
   private highlightEl: HTMLElement
   private spotlightEl: HTMLElement
@@ -286,18 +287,30 @@ export class Widget {
   }
 
   /**
-   * Dock the page: shrink it by the panel's width (via root margin, never a
-   * transform — that would offset our fixed overlay) so the review panel never
-   * covers the app. Skipped on narrow viewports where there's no room.
+   * Let the panel yield to the app: while the review panel is open, fade it out
+   * and make it click-through whenever the cursor is over the app (left of the
+   * panel), snapping it back when the cursor returns to the right edge. Works on
+   * any host layout — unlike a reflow "push", which full-viewport app shells
+   * (fixed / 100vw) ignore.
    */
-  setDocked(on: boolean): void {
+  enableYield(on: boolean): void {
     if (!this.dock) return
-    const el = document.documentElement
-    if (on && window.innerWidth >= 640) {
-      el.style.transition = 'margin-right .28s cubic-bezier(.2,.7,.2,1)'
-      el.style.marginRight = `${this.sheet.offsetWidth || 380}px`
+    if (on) {
+      window.addEventListener('mousemove', this.onYieldMove, true)
     } else {
-      el.style.marginRight = ''
+      window.removeEventListener('mousemove', this.onYieldMove, true)
+      this.yielded = false
+      this.sheet.classList.remove('yield')
+    }
+  }
+
+  private onYieldMove = (e: MouseEvent): void => {
+    // Fade once the cursor is left of the panel's leading edge (over the app).
+    const left = window.innerWidth - this.sheet.offsetWidth
+    const should = e.clientX < left - 4
+    if (should !== this.yielded) {
+      this.yielded = should
+      this.sheet.classList.toggle('yield', should)
     }
   }
 
@@ -429,7 +442,7 @@ export class Widget {
   }
 
   destroy(): void {
-    document.documentElement.style.marginRight = ''
+    this.enableYield(false)
     this.clearPins()
     this.host.remove()
   }

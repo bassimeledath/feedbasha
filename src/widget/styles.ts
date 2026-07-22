@@ -29,9 +29,11 @@ export const CSS = `
 .fb-caption .lbl{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.55;margin-bottom:3px}
 .fb-notice{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:4;background:rgba(15,23,42,.7);color:#fff;padding:8px 14px;border-radius:999px;font-size:12.5px;pointer-events:none;display:none}
 
-.fb-sheet{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;z-index:6;background:#fff;border-left:1px solid #e5e8ee;box-shadow:-16px 0 40px rgba(15,23,42,.14);transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.7,.2,1);display:flex;flex-direction:column;pointer-events:auto}
+.fb-sheet{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;z-index:6;background:#fff;border-left:1px solid #e5e8ee;box-shadow:-16px 0 40px rgba(15,23,42,.14);transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.7,.2,1),opacity .18s ease;display:flex;flex-direction:column;pointer-events:auto}
 .fb-sheet.open{transform:none}
 .fb-sheet.dim{opacity:.28;pointer-events:none}
+/* Yields to the app: fades + click-through while the cursor is over the app. */
+.fb-sheet.yield{opacity:.14;pointer-events:none}
 .fb-shead{padding:16px 18px;border-bottom:1px solid #e5e8ee;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .fb-shead h2{margin:0;font-size:16px}
 .fb-sclose{border:0;background:transparent;color:#94a3b8;font-size:16px;line-height:1;cursor:pointer;padding:4px;flex:0 0 auto}

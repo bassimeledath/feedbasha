@@ -99,7 +99,7 @@ export class Session {
     this.phase = 'idle'
     this.pendingReview = true
     this.widget.spotlight(null)
-    this.widget.setDocked(false)
+    this.widget.enableYield(false)
     this.widget.setPinsVisible(false)
     this.widget.setBubbleReopen(true)
     this.widget.setPhase('idle')
@@ -111,8 +111,7 @@ export class Session {
     this.widget.setBubbleReopen(false)
     this.widget.setPinsVisible(true)
     this.widget.renderReview(this.buildResult())
-    this.widget.setDocked(true)
-    window.setTimeout(() => this.repositionPins(), 320)
+    this.widget.enableYield(true)
   }
 
   /** Return to recording after review, keeping the existing log. */
@@ -125,7 +124,7 @@ export class Session {
   private async arm(): Promise<void> {
     const token = ++this.runToken
     this.phase = 'starting'
-    this.widget.setDocked(false)
+    this.widget.enableYield(false)
     this.widget.setPhase('starting')
 
     const provider = await createProvider(this.config.stt)
@@ -153,15 +152,26 @@ export class Session {
       }
       fn()
     }
-    this.startupTimeout = window.setTimeout(
-      () => settle(() => this.beginRecording('clickonly', 'Mic not responding — capturing clicks only.')),
-      5000,
-    )
+    const armTimeout = (ms: number, msg: string) => {
+      if (this.startupTimeout != null) window.clearTimeout(this.startupTimeout)
+      this.startupTimeout = window.setTimeout(
+        () => settle(() => this.beginRecording('clickonly', msg)),
+        ms,
+      )
+    }
+    armTimeout(5000, 'Mic not responding — capturing clicks only.')
 
     try {
       await provider.start(
         {
           onReady: () => settle(() => this.beginRecording('voice')),
+          onProgress: (m) => {
+            // Slow startup (e.g. model download / mic prompt): keep waiting,
+            // show status, and extend the window instead of falling back.
+            if (token !== this.runToken || settled) return
+            this.widget.setNotice(m)
+            armTimeout(120000, 'Speech model took too long — capturing clicks only.')
+          },
           onInterim: (t) => {
             if (token === this.runToken && this.phase === 'recording') this.widget.setCaption(t)
           },
@@ -366,10 +376,8 @@ export class Session {
     // to reorder, and that manual order is preserved from here on.
     this.events.sort((a, b) => a.t - b.t)
     this.widget.renderReview(this.buildResult())
-    // Dock the page so the panel doesn't overlap the app; pins re-anchor once
-    // the reflow settles.
-    this.widget.setDocked(true)
-    window.setTimeout(() => this.repositionPins(), 320)
+    // Panel yields (fades + click-through) when the cursor is over the app.
+    this.widget.enableYield(true)
   }
 
   private buildResult(): SessionResult {
@@ -510,7 +518,7 @@ export class Session {
       this.startupTimeout = null
     }
     this.teardownRecording()
-    this.widget.setDocked(false)
+    this.widget.enableYield(false)
     this.provider?.dispose()
     this.provider = null
     this.widget.clearPins()

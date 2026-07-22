@@ -5,7 +5,7 @@ export interface WhisperOptions {
   model?: string
   /** Compute backend. 'auto' tries WebGPU then falls back to WASM. */
   device?: 'auto' | 'webgpu' | 'wasm'
-  /** RMS threshold above which a frame counts as speech (default 0.008). */
+  /** RMS threshold above which a frame counts as speech (default 0.006). */
   speechThreshold?: number
   /** Silence after speech that finalizes an utterance, ms (default 650). */
   silenceMs?: number
@@ -71,8 +71,13 @@ export class WhisperProvider implements STTProvider {
     this.clock = clock
     this.running = true
 
+    // Signal immediately so the session extends its startup window (model load
+    // and the mic-permission prompt both take longer than the default timeout).
+    cb.onProgress?.('Preparing local speech model…')
+
     this.transcriber = await this.loadModel(cb)
     if (!this.running) return
+    cb.onProgress?.('Requesting microphone…')
 
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
@@ -122,7 +127,7 @@ export class WhisperProvider implements STTProvider {
         const pct = Math.round(p.progress)
         if (pct !== lastPct) {
           lastPct = pct
-          cb.onNotice?.(`Loading speech model… ${pct}%`)
+          cb.onProgress?.(`Loading speech model… ${pct}%`)
         }
       }
     }
@@ -148,7 +153,7 @@ export class WhisperProvider implements STTProvider {
     if (!this.running) return
     const frameMs = (frame.length / this.sampleRate) * 1000
     const copy = frame.slice()
-    const loud = rms(frame) >= (this.opts.speechThreshold ?? 0.008)
+    const loud = rms(frame) >= (this.opts.speechThreshold ?? 0.006)
 
     if (loud) {
       if (!this.speaking) {
