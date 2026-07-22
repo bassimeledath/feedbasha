@@ -41,6 +41,7 @@ export class Session {
   private pending: Promise<void>[] = []
 
   private reselectId: number | null = null
+  private pendingReview = false // review was closed to idle but kept for reopening
   private lastX = -1
   private lastY = -1
 
@@ -65,6 +66,7 @@ export class Session {
       onStart: () => void this.start(),
       onStop: () => void this.stop(),
       onResume: () => void this.resume(),
+      onClose: () => this.closeReview(),
       onCopy: () => void this.copy(),
       onDiscard: () => this.reset(),
       onDelete: (id) => this.deleteEvent(id),
@@ -78,12 +80,39 @@ export class Session {
   private clock = (): number =>
     this.accumSec + (this.spanActive ? (performance.now() - this.spanStart) / 1000 : 0)
 
-  /** Begin a fresh session. */
+  /** Begin a fresh session — or reopen a review the user closed to the bubble. */
   async start(): Promise<void> {
     if (this.phase !== 'idle' || this.destroyed) return
+    if (this.pendingReview) {
+      this.reopenReview()
+      return
+    }
     this.startedWall = Date.now()
     this.accumSec = 0
     await this.arm()
+  }
+
+  /** Close the review to the idle bubble, keeping the session so the mic can
+   *  reopen it (distinct from "start a new session", which discards it). */
+  private closeReview(): void {
+    if (this.phase !== 'review') return
+    this.phase = 'idle'
+    this.pendingReview = true
+    this.widget.spotlight(null)
+    this.widget.setDocked(false)
+    this.widget.setPinsVisible(false)
+    this.widget.setBubbleReopen(true)
+    this.widget.setPhase('idle')
+  }
+
+  private reopenReview(): void {
+    this.pendingReview = false
+    this.phase = 'review'
+    this.widget.setBubbleReopen(false)
+    this.widget.setPinsVisible(true)
+    this.widget.renderReview(this.buildResult())
+    this.widget.setDocked(true)
+    window.setTimeout(() => this.repositionPins(), 320)
   }
 
   /** Return to recording after review, keeping the existing log. */
@@ -485,6 +514,8 @@ export class Session {
     this.provider?.dispose()
     this.provider = null
     this.widget.clearPins()
+    this.widget.setPinsVisible(true)
+    this.widget.setBubbleReopen(false)
     this.events = []
     this.liveEls.clear()
     this.pending = []
@@ -493,6 +524,7 @@ export class Session {
     this.accumSec = 0
     this.spanActive = false
     this.endedSec = 0
+    this.pendingReview = false
     this.phase = 'idle'
     this.widget.setPhase('idle')
   }

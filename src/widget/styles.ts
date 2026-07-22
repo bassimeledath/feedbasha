@@ -12,8 +12,9 @@ export const CSS = `
 .fb-widget{position:fixed;z-index:5;pointer-events:auto}
 .fb-widget.pos-br{right:22px;bottom:22px}
 .fb-widget.pos-bl{left:22px;bottom:22px}
-.fb-bubble{width:56px;height:56px;border-radius:50%;cursor:pointer;background:rgba(15,23,42,.72);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.35);transition:transform .15s}
+.fb-bubble{position:relative;width:56px;height:56px;border-radius:50%;cursor:pointer;background:rgba(15,23,42,.72);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.35);transition:transform .15s}
 .fb-bubble:hover{transform:translateY(-2px)}
+.fb-bubble.has-review::after{content:'';position:absolute;top:-1px;right:-1px;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 3px rgba(15,23,42,.4)}
 .fb-bubble.starting{cursor:default}
 .fb-bubble svg{width:24px;height:24px}
 .fb-spinner{width:22px;height:22px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:fb-spin .8s linear infinite}
@@ -31,9 +32,10 @@ export const CSS = `
 .fb-sheet{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;z-index:6;background:#fff;border-left:1px solid #e5e8ee;box-shadow:-16px 0 40px rgba(15,23,42,.14);transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.7,.2,1);display:flex;flex-direction:column;pointer-events:auto}
 .fb-sheet.open{transform:none}
 .fb-sheet.dim{opacity:.28;pointer-events:none}
-.fb-shead{padding:18px 18px 12px;border-bottom:1px solid #e5e8ee}
+.fb-shead{padding:16px 18px;border-bottom:1px solid #e5e8ee;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .fb-shead h2{margin:0;font-size:16px}
-.fb-shead p{margin:6px 0 0;color:#64748b;font-size:12.5px;line-height:1.4}
+.fb-sclose{border:0;background:transparent;color:#94a3b8;font-size:16px;line-height:1;cursor:pointer;padding:4px;flex:0 0 auto}
+.fb-sclose:hover{color:#0f172a}
 .fb-slist{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
 .fb-empty{color:#94a3b8;font-size:12.5px;padding:2px}
 .fb-card{border:1px solid #e5e8ee;border-radius:12px;padding:10px 12px 10px 24px;position:relative;background:#fff}

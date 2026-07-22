@@ -3,8 +3,12 @@
 export type STTProviderName = 'auto' | 'webspeech'
 
 export interface STTOptions {
-  /** Which speech-to-text backend to use. Default 'auto' (Web Speech where available). */
-  provider?: STTProviderName
+  /**
+   * Which speech-to-text backend to use. Default 'auto' (Web Speech where
+   * available). Pass an STTProvider instance to plug in a custom backend —
+   * e.g. `new WhisperProvider()` from `feedbasha/whisper` for offline/Electron.
+   */
+  provider?: STTProviderName | STTProvider
   /** BCP-47 language hint, e.g. 'en-US'. */
   language?: string
 }

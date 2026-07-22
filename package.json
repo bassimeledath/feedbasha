@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./whisper": {
+      "types": "./dist/whisper.d.ts",
+      "import": "./dist/whisper.js"
     }
   },
   "files": ["dist"],
@@ -24,6 +28,14 @@
   "license": "MIT",
   "dependencies": {
     "react-grab": "0.1.48"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "tsup": "^8.3.0",

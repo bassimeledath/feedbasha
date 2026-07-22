@@ -6,6 +6,7 @@ export interface WidgetHandlers {
   onStart(): void
   onStop(): void
   onResume(): void
+  onClose(): void
   onCopy(): void
   onDiscard(): void
   onDelete(id: number): void
@@ -143,6 +144,7 @@ export class Widget {
 
     this.bubble.addEventListener('click', () => this.h.onStart())
     this.pill.addEventListener('click', () => this.h.onStop())
+    q('[data-el="sclose"]').addEventListener('click', () => this.h.onClose())
     this.copyBtn.addEventListener('click', () => this.h.onCopy())
     this.resumeBtn.addEventListener('click', () => this.h.onResume())
     this.discardBtn.addEventListener('click', () => this.h.onDiscard())
@@ -178,7 +180,7 @@ export class Widget {
       <div class="fb-caption" data-el="caption"><span class="lbl">listening</span><span data-el="captext"></span></div>
       <div class="fb-notice" data-el="notice"></div>
       <div class="fb-sheet" data-el="sheet">
-        <div class="fb-shead"><h2>Review your feedback</h2><p>Your session in order — edit any line, delete anything you didn't mean, or resume to keep going. Speech recognition is provided by your browser and may be processed by its service.</p></div>
+        <div class="fb-shead"><h2>Review your feedback</h2><button class="fb-sclose" data-el="sclose" title="Close (keeps this session — the mic reopens it)">&#10005;</button></div>
         <div class="fb-slist" data-el="slist"></div>
         <div class="fb-sfoot">
           <button class="fb-copy" data-el="copy">Copy feedback</button>
@@ -260,6 +262,18 @@ export class Widget {
   clearPins(): void {
     this.pins.forEach((p) => p.remove())
     this.pins.clear()
+  }
+
+  /** Hide/show the on-page pins without discarding them (used when the review
+   *  is closed to the idle bubble but the session is kept). */
+  setPinsVisible(on: boolean): void {
+    this.pinsEl.style.display = on ? '' : 'none'
+  }
+
+  /** Mark the idle mic as reopening a kept-but-closed review. */
+  setBubbleReopen(on: boolean): void {
+    this.bubble.classList.toggle('has-review', on)
+    this.bubble.title = on ? 'Reopen your feedback' : 'Start feedback session'
   }
 
   highlight(rect: Rect | null): void {
