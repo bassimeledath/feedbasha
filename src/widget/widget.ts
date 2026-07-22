@@ -1,13 +1,18 @@
-import type { SessionResult, SourceLocation } from '../types'
+import type { ActionEvent, SessionResult, SourceLocation, SpeechEvent } from '../types'
 import { fmtTime } from '../util/time'
 import { CSS } from './styles'
 
 export interface WidgetHandlers {
   onStart(): void
   onStop(): void
+  onResume(): void
   onCopy(): void
   onDiscard(): void
   onDelete(id: number): void
+  onEdit(id: number, text: string): void
+  onReorder(ids: number[]): void
+  onReselect(id: number): void
+  onHover(id: number, on: boolean): void
 }
 
 export type Phase = 'idle' | 'starting' | 'recording' | 'review'
@@ -35,12 +40,51 @@ function srcStr(s: SourceLocation): string {
   return `${s.fileName}${line}${col}`
 }
 
+/** The card that the dragged item should be inserted before, given a cursor Y. */
+function afterElement(container: HTMLElement, y: number): HTMLElement | null {
+  const cards = Array.from(container.querySelectorAll<HTMLElement>('.fb-card:not(.dragging)'))
+  let closest: { offset: number; el: HTMLElement | null } = { offset: -Infinity, el: null }
+  for (const el of cards) {
+    const box = el.getBoundingClientRect()
+    const offset = y - box.top - box.height / 2
+    if (offset < 0 && offset > closest.offset) closest = { offset, el }
+  }
+  return closest.el
+}
+
+function place(el: HTMLElement, rect: Rect | null): void {
+  if (!rect) {
+    el.style.display = 'none'
+    return
+  }
+  el.style.display = 'block'
+  el.style.left = `${rect.x}px`
+  el.style.top = `${rect.y}px`
+  el.style.width = `${rect.width}px`
+  el.style.height = `${rect.height}px`
+}
+
+function mkBtn(cls: string, html: string, title: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.className = cls
+  b.title = title
+  b.innerHTML = html
+  b.addEventListener('click', onClick)
+  return b
+}
+
+function mkDel(onClick: () => void): HTMLButtonElement {
+  return mkBtn('fb-del', '&#10005;', 'remove', onClick)
+}
+
 /** All widget UI lives in a Shadow DOM host, isolated from (and excluded from) the page. */
 export class Widget {
   private host: HTMLElement
   private pins = new Map<number, HTMLElement>()
+  private dragEl: HTMLElement | null = null
 
   private highlightEl: HTMLElement
+  private spotlightEl: HTMLElement
   private pinsEl: HTMLElement
   private widgetEl: HTMLElement
   private bubble: HTMLElement
@@ -53,6 +97,7 @@ export class Widget {
   private slist: HTMLElement
   private copyBtn: HTMLButtonElement
   private fallback: HTMLTextAreaElement
+  private resumeBtn: HTMLElement
   private discardBtn: HTMLElement
   private toast: HTMLElement
   private toasttext: HTMLElement
@@ -77,6 +122,7 @@ export class Widget {
 
     const q = <T extends HTMLElement>(sel: string): T => tree.querySelector(sel) as T
     this.highlightEl = q('[data-el="highlight"]')
+    this.spotlightEl = q('[data-el="spotlight"]')
     this.pinsEl = q('[data-el="pins"]')
     this.widgetEl = q('[data-el="widget"]')
     this.bubble = q('[data-el="bubble"]')
@@ -89,6 +135,7 @@ export class Widget {
     this.slist = q('[data-el="slist"]')
     this.copyBtn = q<HTMLButtonElement>('[data-el="copy"]')
     this.fallback = q<HTMLTextAreaElement>('[data-el="fallback"]')
+    this.resumeBtn = q('[data-el="resume"]')
     this.discardBtn = q('[data-el="discard"]')
     this.toast = q('[data-el="toast"]')
     this.toasttext = q('[data-el="toasttext"]')
@@ -96,7 +143,25 @@ export class Widget {
     this.bubble.addEventListener('click', () => this.h.onStart())
     this.pill.addEventListener('click', () => this.h.onStop())
     this.copyBtn.addEventListener('click', () => this.h.onCopy())
+    this.resumeBtn.addEventListener('click', () => this.h.onResume())
     this.discardBtn.addEventListener('click', () => this.h.onDiscard())
+
+    // Drag-to-reorder within the review list.
+    this.slist.addEventListener('dragover', (e) => {
+      if (!this.dragEl) return
+      e.preventDefault()
+      const after = afterElement(this.slist, e.clientY)
+      if (after == null) this.slist.appendChild(this.dragEl)
+      else this.slist.insertBefore(this.dragEl, after)
+    })
+    this.slist.addEventListener('drop', (e) => {
+      if (!this.dragEl) return
+      e.preventDefault()
+      const ids = Array.from(this.slist.querySelectorAll<HTMLElement>('.fb-card')).map((c) =>
+        Number(c.dataset.eid),
+      )
+      this.h.onReorder(ids)
+    })
 
     this.setPhase('idle')
   }
@@ -104,7 +169,7 @@ export class Widget {
   private template(position: 'bottom-right' | 'bottom-left'): string {
     const pos = position === 'bottom-left' ? 'pos-bl' : 'pos-br'
     return `
-      <div class="fb-overlay"><div class="fb-highlight" data-el="highlight"></div><div data-el="pins"></div></div>
+      <div class="fb-overlay"><div class="fb-spotlight" data-el="spotlight"></div><div class="fb-highlight" data-el="highlight"></div><div data-el="pins"></div></div>
       <div class="fb-widget ${pos}" data-el="widget">
         <div class="fb-bubble" data-el="bubble" title="Start feedback session">${MIC_SVG}</div>
         <div class="fb-pill" data-el="pill" title="End session"><span class="fb-dot"></span><span class="fb-time" data-el="time">0:00</span><span class="fb-endlbl">End &#9656;</span></div>
@@ -112,12 +177,15 @@ export class Widget {
       <div class="fb-caption" data-el="caption"><span class="lbl">listening</span><span data-el="captext"></span></div>
       <div class="fb-notice" data-el="notice"></div>
       <div class="fb-sheet" data-el="sheet">
-        <div class="fb-shead"><h2>Review your feedback</h2><p>Talk freely; delete anything you didn't mean. Speech recognition is provided by your browser and may be processed by its service.</p></div>
+        <div class="fb-shead"><h2>Review your feedback</h2><p>Your session in order — edit any line, delete anything you didn't mean, or resume to keep going. Speech recognition is provided by your browser and may be processed by its service.</p></div>
         <div class="fb-slist" data-el="slist"></div>
         <div class="fb-sfoot">
           <button class="fb-copy" data-el="copy">Copy feedback</button>
           <textarea class="fb-fallback" data-el="fallback" readonly></textarea>
-          <button class="fb-discard" data-el="discard">start a new session</button>
+          <div class="fb-sfoot-row">
+            <button class="fb-resume" data-el="resume">&#8635; Resume recording</button>
+            <button class="fb-discard" data-el="discard">start a new session</button>
+          </div>
         </div>
       </div>
       <div class="fb-toast" data-el="toast"><span class="ok">&#10003;</span> <span data-el="toasttext"></span></div>
@@ -158,10 +226,10 @@ export class Widget {
     this.notice.style.display = 'block'
   }
 
-  addPin(id: number, rect: Rect): void {
+  addPin(id: number, label: number, rect: Rect): void {
     const p = document.createElement('div')
     p.className = 'fb-pin'
-    p.textContent = String(id)
+    p.textContent = String(label)
     p.style.left = `${rect.x}px`
     p.style.top = `${rect.y}px`
     this.pinsEl.appendChild(p)
@@ -194,15 +262,12 @@ export class Widget {
   }
 
   highlight(rect: Rect | null): void {
-    if (!rect) {
-      this.highlightEl.style.display = 'none'
-      return
-    }
-    this.highlightEl.style.display = 'block'
-    this.highlightEl.style.left = `${rect.x}px`
-    this.highlightEl.style.top = `${rect.y}px`
-    this.highlightEl.style.width = `${rect.width}px`
-    this.highlightEl.style.height = `${rect.height}px`
+    place(this.highlightEl, rect)
+  }
+
+  /** Dramatic focus: dims the rest of the page, leaving the target bright + ringed. */
+  spotlight(rect: Rect | null): void {
+    place(this.spotlightEl, rect)
   }
 
   renderReview(result: SessionResult): void {
@@ -216,58 +281,101 @@ export class Widget {
     const scroll = this.slist.scrollTop
     this.slist.innerHTML = ''
 
-    if (result.transcript.length === 0 && result.annotations.length === 0) {
+    if (result.events.length === 0) {
       const e = document.createElement('div')
       e.className = 'fb-empty'
-      e.textContent = 'Nothing was captured this session. Start a new one to try again.'
+      e.textContent =
+        'Nothing was captured. Resume to keep talking, or start a new session.'
       this.slist.appendChild(e)
-      this.slist.scrollTop = scroll
       return
     }
 
-    const tx = document.createElement('div')
-    tx.className = 'fb-tx'
-    if (result.transcript.length === 0) {
-      tx.innerHTML = `<span style="color:#94a3b8">No speech captured.</span>`
-    } else {
-      tx.innerHTML = result.transcript
-        .map((s) => {
-          const marks = s.annotationIds?.length
-            ? ' ' + s.annotationIds.map((id) => `<span class="mk">[#${id}]</span>`).join('')
-            : ''
-          return `[${fmtTime(s.t)}] ${esc(s.text)}${marks}`
-        })
-        .join('<br>')
+    for (const ev of result.events) {
+      this.slist.appendChild(ev.kind === 'speech' ? this.speechCard(ev) : this.actionCard(ev))
     }
-    this.slist.appendChild(tx)
-
-    if (result.annotations.length === 0) {
-      const e = document.createElement('div')
-      e.className = 'fb-empty'
-      e.textContent = 'No pinned elements — talk-only feedback is fine.'
-      this.slist.appendChild(e)
-    }
-
-    for (const a of result.annotations) {
-      const item = document.createElement('div')
-      item.className = 'fb-item'
-      const label = a.element.component ? esc(a.element.component) : `&lt;${esc(a.element.tag)}&gt;`
-      const refText = a.element.source
-        ? srcStr(a.element.source)
-        : (a.element.selector ?? a.element.outerHTMLSnippet)
-      const said = a.transcript
-        ? `<div class="fb-said"><b>near:</b> "${esc(a.transcript)}"</div>`
-        : ''
-      item.innerHTML =
-        `<button class="fb-del" title="remove">&#10005;</button>` +
-        `<div class="top"><span class="fb-badge">${a.id}</span><span class="fb-comp">${label}</span></div>` +
-        `<div class="fb-src">${esc(refText)}</div>${said}`
-      const del = item.querySelector('.fb-del')
-      if (del) del.addEventListener('click', () => this.h.onDelete(a.id))
-      this.slist.appendChild(item)
-    }
-
     this.slist.scrollTop = scroll
+  }
+
+  /** Add a drag handle + drag wiring so a card can be reordered. */
+  private makeDraggable(card: HTMLElement, id: number): void {
+    card.dataset.eid = String(id)
+    const grip = document.createElement('div')
+    grip.className = 'fb-grip'
+    grip.title = 'drag to reorder'
+    grip.innerHTML = '&#10303;'
+    grip.addEventListener('mousedown', () => (card.draggable = true))
+    grip.addEventListener('mouseup', () => (card.draggable = false))
+    card.addEventListener('dragstart', (e) => {
+      this.dragEl = card
+      card.classList.add('dragging')
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', String(id))
+      }
+    })
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging')
+      card.draggable = false
+      this.dragEl = null
+    })
+    card.appendChild(grip)
+  }
+
+  /** An editable card for something the user said. */
+  private speechCard(ev: SpeechEvent): HTMLElement {
+    const card = document.createElement('div')
+    card.className = 'fb-card fb-card-speech'
+    this.makeDraggable(card, ev.id)
+    card.appendChild(mkDel(() => this.h.onDelete(ev.id)))
+
+    const time = document.createElement('span')
+    time.className = 'fb-ctime'
+    time.textContent = fmtTime(ev.t)
+    card.appendChild(time)
+
+    const body = document.createElement('div')
+    body.className = 'fb-say'
+    body.contentEditable = 'true'
+    body.spellcheck = false
+    body.textContent = ev.text
+    body.addEventListener('input', () => this.h.onEdit(ev.id, body.textContent ?? ''))
+    card.appendChild(body)
+    return card
+  }
+
+  /** A card marking an element the user selected. */
+  private actionCard(ev: ActionEvent): HTMLElement {
+    const el = ev.element
+    const card = document.createElement('div')
+    card.className = 'fb-card fb-card-action'
+    const label = el.component ? esc(el.component) : `&lt;${esc(el.tag)}&gt;`
+    const refText = el.source ? srcStr(el.source) : (el.selector ?? el.outerHTMLSnippet)
+    const said = el.text ? `<div class="fb-said">&ldquo;${esc(el.text)}&rdquo;</div>` : ''
+    card.innerHTML =
+      `<div class="top"><span class="fb-badge">${ev.n}</span>` +
+      `<span class="fb-ctime">${fmtTime(ev.t)}</span>` +
+      `<span class="fb-comp">${label}</span></div>` +
+      `<div class="fb-src">${esc(refText)}</div>${said}`
+    this.makeDraggable(card, ev.id)
+    card.appendChild(mkBtn('fb-edit', '&#9998;', 'reselect element', () => this.h.onReselect(ev.id)))
+    card.appendChild(mkDel(() => this.h.onDelete(ev.id)))
+    // Hovering a card spotlights the element it points to, on the page.
+    card.addEventListener('mouseenter', () => {
+      if (!this.dragEl) this.h.onHover(ev.id, true)
+    })
+    card.addEventListener('mouseleave', () => this.h.onHover(ev.id, false))
+    return card
+  }
+
+  /** Toggle the one-shot reselect mode (dims the sheet, shows a hint). */
+  setReselecting(on: boolean, hint = 'Click the correct element · Esc to cancel'): void {
+    this.sheet.classList.toggle('dim', on)
+    if (on) {
+      this.notice.textContent = hint
+      this.notice.style.display = 'block'
+    } else {
+      this.notice.style.display = 'none'
+    }
   }
 
   showCopied(): void {

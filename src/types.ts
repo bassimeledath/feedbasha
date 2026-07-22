@@ -42,29 +42,33 @@ export interface ElementContext {
   outerHTMLSnippet: string
 }
 
-export interface Annotation {
+/** One entry in the chronological session log. The log is the whole model:
+ *  what the user said and what they selected, in the exact order it happened. */
+export type SessionEvent = SpeechEvent | ActionEvent
+
+export interface SpeechEvent {
   id: number
+  kind: 'speech'
   /** Seconds from session start. */
   t: number
-  element: ElementContext
-  /** Best-effort transcript spoken around this annotation. */
-  transcript?: string
+  text: string
 }
 
-export interface TranscriptSegment {
+export interface ActionEvent {
+  id: number
+  kind: 'action'
   /** Seconds from session start. */
   t: number
-  end?: number
-  text: string
-  /** Set during correlation; a phrase can anchor more than one annotation ("these buttons"). */
-  annotationIds?: number[]
+  /** Display ordinal shown on the on-screen pin and the review card. */
+  n: number
+  element: ElementContext
 }
 
 export interface SessionResult {
   startedAt: number
   durationSec: number
-  transcript: TranscriptSegment[]
-  annotations: Annotation[]
+  /** Speech + element selections, ordered by time. */
+  events: SessionEvent[]
 }
 
 // ---- STT provider contract (kept intentionally tiny) ----

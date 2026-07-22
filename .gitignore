@@ -3,5 +3,6 @@ dist/
 *.log
 .DS_Store
 .feedbasha/
+.dispatch/
 examples/*/node_modules/
 examples/*/dist/

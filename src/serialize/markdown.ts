@@ -1,55 +1,43 @@
-import type { SessionResult, Annotation } from '../types'
+import type { ActionEvent, SessionResult } from '../types'
 import { fmtTime } from '../util/time'
 
-function headLabel(a: Annotation): string {
-  return a.element.component ?? `<${a.element.tag}>`
-}
-
-function sourceSuffix(a: Annotation): string {
-  const s = a.element.source
-  if (!s) return ''
-  const line = s.lineNumber != null ? `:${s.lineNumber}` : ''
-  const col = s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
-  return ` — ${s.fileName}${line}${col}`
-}
-
-function disambiguator(a: Annotation): string {
-  const el = a.element
-  const sel = el.selector ?? el.outerHTMLSnippet ?? `<${el.tag}>`
-  return el.text ? `${sel} — "${el.text}"` : sel
+function actionLine(ev: ActionEvent): string {
+  const el = ev.element
+  const label = el.component ?? `<${el.tag}>`
+  const s = el.source
+  const src = s
+    ? ` — ${s.fileName}${s.lineNumber != null ? `:${s.lineNumber}` : ''}${
+        s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
+      }`
+    : ` — ${el.selector ?? el.outerHTMLSnippet}`
+  const txt = el.text ? ` — "${el.text}"` : ''
+  return `[${fmtTime(ev.t)}] → #${ev.n} ${label}${src}${txt}`
 }
 
 /**
- * Single-representation output: an annotated transcript, followed by compact
- * reference definitions. `redact`, if provided, scrubs the final text once.
+ * Chronological session log: each line is either something the user said or an
+ * element they selected, in order. `redact`, if provided, scrubs the text once.
  */
 export function toMarkdown(result: SessionResult, redact?: (t: string) => string): string {
-  const anns = result.annotations
+  const events = result.events
+  const refs = events.filter((e) => e.kind === 'action').length
   const out: string[] = []
 
   out.push(
-    `# feedbasha session — ${anns.length} annotation${anns.length !== 1 ? 's' : ''} (${fmtTime(result.durationSec)})`,
+    `# feedbasha session — ${fmtTime(result.durationSec)}, ${refs} element${refs !== 1 ? 's' : ''} referenced`,
   )
   out.push('')
 
-  // Annotated transcript
-  if (result.transcript.length === 0) {
-    out.push('_(no speech captured)_')
+  if (events.length === 0) {
+    out.push('_(nothing captured)_')
   } else {
-    for (const seg of result.transcript) {
-      const marker = seg.annotationIds?.length
-        ? ' ' + seg.annotationIds.map((id) => `[#${id}]`).join('')
-        : ''
-      out.push(`[${fmtTime(seg.t)}] ${seg.text}${marker}`)
-    }
-  }
-
-  // Reference definitions
-  if (anns.length) {
-    out.push('')
-    for (const a of anns) {
-      out.push(`[#${a.id}] ${headLabel(a)}${sourceSuffix(a)}`)
-      out.push(`     ${disambiguator(a)}`)
+    for (const ev of events) {
+      if (ev.kind === 'speech') {
+        const t = ev.text.trim()
+        if (t) out.push(`[${fmtTime(ev.t)}] ${t}`)
+      } else {
+        out.push(actionLine(ev))
+      }
     }
   }
 
