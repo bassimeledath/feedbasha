@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>feedbasha · making the mode switch obvious</title>
+<style>
+  :root { --accent:#0e9f6e; --teal:#38bdf8; --ink:#0f172a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:#eef2f6; -webkit-font-smoothing:antialiased; }
+  header { padding:34px 32px 6px; max-width:1000px; margin:0 auto; }
+  header h1 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
+  header p { margin:0; color:#64748b; font-size:14px; max-width:680px; line-height:1.55; }
+  header p b { color:#334155; }
+  .list { max-width:1000px; margin:0 auto; padding:22px 32px 70px; display:flex; flex-direction:column; gap:18px; }
+  .card { background:#fff; border:1px solid #e5e8ee; border-radius:16px; padding:18px 20px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  .card .tag { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); background:#effaf4; padding:3px 8px; border-radius:999px; margin-bottom:8px; }
+  .card h2 { margin:0 0 4px; font-size:16px; }
+  .card .desc { margin:0 0 6px; font-size:13px; color:#64748b; line-height:1.55; }
+  .card .desc b { color:#334155; font-weight:650; }
+  .stage { margin-top:14px; background:repeating-linear-gradient(0deg,#f6f8fa 0 27px,#f1f4f8 27px 28px); border:1px solid #eef2f6; border-radius:12px; padding:26px; display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .try { font-size:12px; color:#94a3b8; }
+  .pros { display:flex; gap:24px; margin-top:12px; flex-wrap:wrap; }
+  .pros div { font-size:12.5px; color:#475569; line-height:1.5; }
+  .pros .h { font-weight:700; color:#334155; display:block; margin-bottom:2px; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .pros .good .h { color:#059669; } .pros .bad .h { color:#b45309; }
+
+  /* ===== HUD shell ===== */
+  .hud { display:inline-flex; align-items:center; gap:8px; background:rgba(15,23,42,.85); backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.14); color:#fff; border-radius:999px; padding:6px 10px 6px 4px; box-shadow:0 14px 40px rgba(15,23,42,.4); user-select:none; }
+  .grip { display:flex; align-items:center; justify-content:center; width:22px; height:30px; border-radius:8px; color:rgba(255,255,255,.5); cursor:grab; }
+  .grip svg { width:12px; height:18px; }
+  .vsep { width:1px; align-self:stretch; background:rgba(255,255,255,.16); margin:4px 0; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#ff5d5d; }
+  .hud.text .dot { background:var(--teal); }
+  .time { font-variant-numeric:tabular-nums; font-weight:600; font-size:14px; }
+  .hud.text .time { display:none; }
+  .modelbl { font-size:10.5px; color:var(--teal); font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+  .ctl { display:inline-flex; align-items:center; gap:6px; background:transparent; border:0; color:#fff; font:inherit; font-size:12px; cursor:pointer; padding:6px 9px; border-radius:999px; }
+  .ctl:hover { background:rgba(255,255,255,.14); }
+  .ctl svg { width:15px; height:15px; }
+
+  /* --- A: segmented --- */
+  .seg { display:inline-flex; background:rgba(255,255,255,.10); border-radius:999px; padding:3px; gap:2px; }
+  .seg button { display:inline-flex; align-items:center; gap:6px; border:0; background:transparent; cursor:pointer; color:rgba(255,255,255,.7); font:inherit; font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px; transition:.14s; }
+  .seg button svg { width:14px; height:14px; }
+  .seg button.on { background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.2); }
+  .seg button.on.t { color:#0369a1; }
+  .seg button:not(.on):hover { color:#fff; }
+
+  /* --- B/C: verb / swap --- */
+  .swapbtn { color:rgba(255,255,255,.92); }
+  .swapbtn .to { color:rgba(255,255,255,.55); font-weight:400; }
+  .swapbtn .m { font-weight:700; }
+  .swapbtn:hover { background:rgba(255,255,255,.16); }
+
+  /* --- D: sliding switch --- */
+  .switch { position:relative; display:inline-flex; align-items:center; background:rgba(255,255,255,.10); border-radius:999px; padding:3px; cursor:pointer; gap:0; }
+  .switch .opt { position:relative; z-index:1; display:inline-flex; align-items:center; gap:6px; padding:5px 11px; font-size:12px; font-weight:600; color:rgba(255,255,255,.6); transition:color .18s; }
+  .switch .opt svg { width:14px; height:14px; }
+  .switch .knob { position:absolute; top:3px; bottom:3px; width:calc(50% - 3px); border-radius:999px; background:#fff; transition:transform .2s cubic-bezier(.3,.8,.3,1); box-shadow:0 1px 3px rgba(0,0,0,.2); }
+  .switch.voice .knob { transform:translateX(0); }
+  .switch.text .knob { transform:translateX(100%); }
+  .switch.voice .opt.v { color:var(--ink); }
+  .switch.text .opt.t { color:#0369a1; }
+
+  .toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#0f172a; color:#fff; padding:11px 18px; border-radius:12px; font-size:13px; box-shadow:0 14px 40px rgba(15,23,42,.45); z-index:99; opacity:0; transition:opacity .18s; pointer-events:none; }
+  .toast.show { opacity:1; }
+  .rec { display:inline-flex; align-items:center; gap:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Making “switch to text” read as an action, not a status</h1>
+  <p>The problem: a lone <b>“✎ Text”</b> button sitting mid-HUD looks like a label that says <i>“you are in text mode.”</i>
+     Nothing signals it’s a <b>toggle you click to switch</b>. Four fixes below — click each to feel it flip. All also pull the
+     control out of dead-center so it reads as a control.</p>
+</header>
+
+<div class="list">
+
+  <!-- A -->
+  <div class="card">
+    <span class="tag">Option A · recommended</span>
+    <h2>Segmented selector · 🎤 Voice | ✎ Text</h2>
+    <p class="desc">Both modes shown as a two-part switch; the active one is a solid pill. This is the universal
+       “pick one of two” metaphor — <b>impossible to misread as a status</b>, and the inactive half obviously invites a click.</p>
+    <div class="stage" id="stageA"></div>
+    <div class="pros">
+      <div class="good"><span class="h">Good</span>Zero ambiguity · both modes always visible · one tap</div>
+      <div class="bad"><span class="h">Cost</span>Widest of the four (~150px)</div>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="card">
+    <span class="tag">Option B</span>
+    <h2>Verb label · “Switch to text”</h2>
+    <p class="desc">Keep the single button but say the verb out loud, with a swap glyph:
+       <b>⇄ Switch to&nbsp;<i>text</i></b> → <b>⇄ Switch to&nbsp;<i>voice</i></b>. The word “switch” removes all doubt.</p>
+    <div class="stage" id="stageB"></div>
+    <div class="pros">
+      <div class="good"><span class="h">Good</span>Explicit verb · compact-ish · one button</div>
+      <div class="bad"><span class="h">Cost</span>Longer text · current mode only implied (it’s “the other one”)</div>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="card">
+    <span class="tag">Option C</span>
+    <h2>Swap icon · ⇄ Text</h2>
+    <p class="desc">Same single button, minimal: a <b>swap/exchange icon</b> + the target mode. The ⇄ icon is a
+       well-known “toggle” signal, so it reads as an action without spelling out “switch”.</p>
+    <div class="stage" id="stageC"></div>
+    <div class="pros">
+      <div class="good"><span class="h">Good</span>Compact · icon implies toggle · tidy</div>
+      <div class="bad"><span class="h">Cost</span>Relies on icon literacy · current mode still only implied</div>
+    </div>
+  </div>
+
+  <!-- D -->
+  <div class="card">
+    <span class="tag">Option D</span>
+    <h2>Sliding switch · 🎤 ⇢ ✎</h2>
+    <p class="desc">A physical toggle: mic on the left, pencil on the right, a knob that slides to the active side.
+       Reads unmistakably as “flip me,” and the knob shows current mode at a glance.</p>
+    <div class="stage" id="stageD"></div>
+    <div class="pros">
+      <div class="good"><span class="h">Good</span>Strong “switch” affordance · shows current state · fun</div>
+      <div class="bad"><span class="h">Cost</span>Slightly more chrome · two icons need learning first time</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
+  const PEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+  const SWAP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h13l-3-3M17 17H4l3 3"/></svg>';
+  const GRIP = '<svg viewBox="0 0 12 18" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+
+  function toast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),1300); }
+
+  // left part of the HUD (grip + status), varies by mode
+  function shell(mode){
+    return '<span class="grip">'+GRIP+'</span><span class="vsep"></span>' +
+      '<span class="rec"><span class="dot"></span>' + (mode==='voice' ? '<span class="time">0:24</span>' : '<span class="modelbl">text</span>') + '</span>' +
+      '<span class="vsep"></span>';
+  }
+  function tail(){
+    return '<span class="vsep"></span><button class="ctl">'+PAUSE+'</button><span class="vsep"></span><button class="ctl">End &#9656;</button>';
+  }
+
+  function render(id, mode, control){
+    const hud = document.querySelector('#'+id+' .hud');
+    hud.className = 'hud '+mode;
+    hud.innerHTML = shell(mode) + control(mode) + tail();
+  }
+
+  function mount(id, control){
+    const stage = document.getElementById(id);
+    stage.innerHTML = '<div class="hud voice"></div><span class="try">← click the mode control to flip</span>';
+    let mode='voice';
+    const rerender=()=>render(id, mode, control);
+    stage.addEventListener('click', (e)=>{
+      const act = e.target.closest('[data-act]');
+      if(!act) return;
+      const target = act.dataset.act;
+      if(target===mode) return;
+      mode=target; rerender();
+      toast(mode==='voice' ? '🎤 voice' : '✎ text — click an element, type a note');
+    });
+    rerender();
+  }
+
+  // ---- controls ----
+  const ctrlA = (mode)=>
+    '<span class="seg">' +
+      '<button data-act="voice" class="'+(mode==='voice'?'on':'')+'">'+MIC+'Voice</button>' +
+      '<button data-act="text" class="'+(mode==='text'?'on t':'')+'">'+PEN+'Text</button>' +
+    '</span>';
+
+  const ctrlB = (mode)=>{
+    const toText = mode==='voice';
+    return '<button class="ctl swapbtn" data-act="'+(toText?'text':'voice')+'">'+SWAP+
+      '<span class="to">Switch to</span> <span class="m">'+(toText?'text':'voice')+'</span></button>';
+  };
+
+  const ctrlC = (mode)=>{
+    const toText = mode==='voice';
+    return '<button class="ctl swapbtn" data-act="'+(toText?'text':'voice')+'">'+SWAP+
+      '<span class="m">'+(toText?'Text':'Voice')+'</span></button>';
+  };
+
+  const ctrlD = (mode)=>
+    '<span class="switch '+mode+'"><span class="knob"></span>' +
+      '<span class="opt v" data-act="voice">'+MIC+'Voice</span>' +
+      '<span class="opt t" data-act="text">'+PEN+'Text</span>' +
+    '</span>';
+
+  mount('stageA', ctrlA);
+  mount('stageB', ctrlB);
+  mount('stageC', ctrlC);
+  mount('stageD', ctrlD);
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "feedbasha",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Voice-based feedback capture for React apps — talk and point, paste into your coding agent.",
   "type": "module",

@@ -27,10 +27,10 @@ const TERMINAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture',
 
 function noticeFor(err: string): string {
   if (err === 'not-allowed' || err === 'service-not-allowed')
-    return 'Microphone blocked — capturing clicks only.'
-  if (err === 'audio-capture') return 'No microphone found — capturing clicks only.'
-  if (err === 'network') return 'Speech service unreachable — capturing clicks only.'
-  return 'Speech recognition unavailable — capturing clicks only.'
+    return 'Microphone blocked, capturing clicks only.'
+  if (err === 'audio-capture') return 'No microphone found, capturing clicks only.'
+  if (err === 'network') return 'Speech service unreachable, capturing clicks only.'
+  return 'Speech recognition unavailable, capturing clicks only.'
 }
 
 /**
@@ -43,6 +43,7 @@ export class WebSpeechProvider implements STTProvider {
   private rec: AnyRecognition | null = null
   private running = false
   private clock: () => number = () => 0
+  private uttStart: number | null = null // clock time speech onset was first detected
 
   constructor(private lang = 'en-US') {}
 
@@ -71,9 +72,15 @@ export class WebSpeechProvider implements STTProvider {
         const text: string = res?.[0]?.transcript ?? ''
         if (res?.isFinal) {
           const clean = text.trim()
-          if (clean) cb.onSegment?.({ t: this.clock(), text: clean })
+          if (clean) {
+            // Stamp at speech ONSET, not finalization — otherwise a phrase spoken
+            // right after a click sorts to the end of the log (it finalizes late).
+            cb.onSegment?.({ t: this.uttStart ?? this.clock(), text: clean })
+          }
+          this.uttStart = null // next utterance re-captures its own onset
         } else {
           interim += text
+          if (this.uttStart == null) this.uttStart = this.clock()
         }
       }
       const trimmed = interim.trim()
@@ -100,7 +107,7 @@ export class WebSpeechProvider implements STTProvider {
         rec.start()
       } catch {
         this.running = false
-        cb.onNotice?.('Speech recognition stopped — capturing clicks only.')
+        cb.onNotice?.('Speech recognition stopped, capturing clicks only.')
       }
     }
 
@@ -139,6 +146,7 @@ export class WebSpeechProvider implements STTProvider {
 
   pause(): void {
     this.running = false // stops the onend auto-restart
+    this.uttStart = null
     try {
       this.rec?.stop()
     } catch {

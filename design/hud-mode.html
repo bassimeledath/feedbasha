@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>feedbasha · draggable HUD + voice/text toggle</title>
+<style>
+  :root { --accent:#0e9f6e; --teal:#38bdf8; --ink:#0f172a; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:#eef2f6; -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  /* fake app behind everything, so you can see the HUD float over it */
+  .app {
+    position:fixed; inset:0; padding:40px 48px; color:#94a3b8;
+    background:
+      radial-gradient(1200px 400px at 20% -10%, #e2e8f0, transparent),
+      repeating-linear-gradient(0deg,#f6f8fa 0 33px,#f1f4f8 33px 34px);
+  }
+  .app h1 { color:#334155; font-size:20px; margin:0 0 4px; }
+  .app p { margin:0 0 22px; font-size:13.5px; max-width:560px; line-height:1.6; }
+  .app .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; max-width:720px; }
+  .app .box { background:#fff; border:1px solid #e5e8ee; border-radius:12px; height:74px; }
+  .app .wide { grid-column:1/3; }
+  .app kbd { font-family:ui-monospace,Menlo,monospace; font-size:11px; background:#fff; border:1px solid #e2e8f0; border-bottom-width:2px; border-radius:5px; padding:1px 5px; color:#334155; }
+
+  /* ============ shared HUD (dark glass) ============ */
+  .glass {
+    background:rgba(15,23,42,.85); backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.14); color:#fff; box-shadow:0 14px 40px rgba(15,23,42,.4);
+  }
+  .hud { position:fixed; display:flex; align-items:center; gap:9px; border-radius:999px; padding:6px 10px 6px 6px; z-index:50; user-select:none; }
+  .hud.dragging { cursor:grabbing; box-shadow:0 20px 60px rgba(15,23,42,.5); }
+
+  /* drag grip — six dots, on the LEFT */
+  .grip {
+    width:22px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+    cursor:grab; color:rgba(255,255,255,.5); flex:0 0 auto;
+  }
+  .grip:hover { color:rgba(255,255,255,.9); background:rgba(255,255,255,.08); }
+  .grip:active { cursor:grabbing; }
+  .grip svg { width:12px; height:18px; }
+
+  .vsep { width:1px; align-self:stretch; background:rgba(255,255,255,.16); margin:4px 0; }
+
+  .rec { display:flex; align-items:center; gap:8px; padding:0 2px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#ff5d5d; }
+  .hud.voice .dot { animation:pulse 1.4s infinite; }
+  .hud.text .dot { background:var(--teal); }
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,93,.55)}70%{box-shadow:0 0 0 9px rgba(255,93,93,0)}100%{box-shadow:0 0 0 0 rgba(255,93,93,0)}}
+  .time { font-variant-numeric:tabular-nums; font-weight:600; font-size:14px; }
+
+  .ctl {
+    display:inline-flex; align-items:center; gap:6px; background:transparent; border:0; color:#fff;
+    font:inherit; font-size:12px; cursor:pointer; padding:6px 9px; border-radius:999px;
+  }
+  .ctl:hover { background:rgba(255,255,255,.14); }
+  .ctl svg { width:15px; height:15px; }
+  .end { font-weight:600; }
+
+  /* ---- mode control: SEGMENTED (variation A) ---- */
+  .seg { display:inline-flex; background:rgba(255,255,255,.10); border-radius:999px; padding:3px; gap:2px; }
+  .seg button { display:inline-flex; align-items:center; gap:6px; border:0; background:transparent; cursor:pointer;
+    color:rgba(255,255,255,.7); font:inherit; font-size:12px; font-weight:600; padding:5px 10px; border-radius:999px; transition:.14s; }
+  .seg button svg { width:14px; height:14px; }
+  .seg button.on { background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.2); }
+  .seg button.on.texton { color:#0369a1; }
+  .seg button:not(.on):hover { color:#fff; }
+
+  /* ---- mode control: SINGLE TOGGLE ICON (variation B) ---- */
+  .modeicon { position:relative; }
+  .modeicon .lbl { font-size:12px; font-weight:600; }
+
+  .idlebubble {
+    position:fixed; right:26px; bottom:26px; width:56px; height:56px; border-radius:50%; z-index:50;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; transition:transform .15s;
+  }
+  .idlebubble:hover { transform:translateY(-2px); }
+  .idlebubble svg { width:24px; height:24px; }
+
+  .toast {
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#0f172a; color:#fff;
+    padding:11px 18px; border-radius:12px; font-size:13px; box-shadow:0 14px 40px rgba(15,23,42,.45); z-index:99;
+    opacity:0; transition:opacity .18s; pointer-events:none;
+  }
+  .toast.show { opacity:1; }
+
+  /* control panel */
+  .panel {
+    position:fixed; left:24px; bottom:24px; z-index:60; background:#fff; border:1px solid #e5e8ee;
+    border-radius:14px; padding:14px 16px; box-shadow:0 12px 34px rgba(15,23,42,.16); max-width:330px;
+  }
+  .panel h2 { margin:0 0 8px; font-size:13.5px; }
+  .panel p { margin:0 0 10px; font-size:12.5px; color:#475569; line-height:1.55; }
+  .panel .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .panel button.v {
+    border:1px solid #e2e8f0; background:#f8fafc; color:#0f172a; font-size:12px; font-weight:600;
+    border-radius:8px; padding:7px 11px; cursor:pointer;
+  }
+  .panel button.v.active { border-color:var(--accent); background:#effaf4; color:#065f46; }
+  .panel .hint { font-size:11.5px; color:#94a3b8; margin-top:9px; }
+
+  /* text-mode composer preview */
+  .composer { position:fixed; width:250px; border-radius:14px; overflow:hidden; background:#fff; color:var(--ink);
+    border:1px solid #e5e8ee; box-shadow:0 16px 40px rgba(15,23,42,.22); z-index:45; display:none; }
+  .composer.show { display:block; }
+  .composer .ch { display:flex; align-items:center; gap:7px; padding:9px 11px; border-bottom:1px solid #eef2f6; }
+  .composer .badge { width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .composer .src { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:#065f46; background:#effaf4; border-radius:5px; padding:2px 6px; }
+  .composer textarea { width:100%; border:0; resize:none; padding:10px 11px; font:inherit; font-size:12.5px; outline:none; min-height:52px; }
+  .composer .cf { display:flex; justify-content:flex-end; gap:8px; padding:8px 10px; border-top:1px solid #eef2f6; }
+  .composer .add { border:0; background:var(--accent); color:#fff; font-weight:650; font-size:12px; border-radius:8px; padding:7px 13px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <h1>Your app</h1>
+    <p>The HUD floats over your app. <b>Drag it by the six-dot grip on the left</b> to move it anywhere.
+       Use the <b>mode toggle</b> in the HUD to switch between 🎤 voice and ✎ text without stopping. Try it →</p>
+    <div class="grid">
+      <div class="box"></div><div class="box"></div><div class="box"></div>
+      <div class="box wide"></div><div class="box"></div>
+    </div>
+  </div>
+
+  <!-- idle: the logo/mic bubble (click to open the HUD) -->
+  <div class="idlebubble glass" id="bubble" title="Start — click to open the HUD">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>
+  </div>
+
+  <!-- the draggable HUD (hidden until bubble clicked) -->
+  <div class="hud glass voice" id="hud" style="display:none; right:26px; bottom:26px;">
+    <div class="grip" id="grip" title="Drag to move">
+      <svg viewBox="0 0 12 18" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg>
+    </div>
+    <div class="vsep"></div>
+    <div class="rec"><span class="dot"></span><span class="time" id="time">0:12</span></div>
+    <div class="vsep"></div>
+
+    <!-- mode control slot (swapped by the variation buttons) -->
+    <div id="modeslot"></div>
+
+    <div class="vsep"></div>
+    <button class="ctl" id="pause" title="Pause">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button class="ctl end" id="end" title="End session">End &#9656;</button>
+  </div>
+
+  <!-- text-mode composer preview (shows when you flip to text and 'click an element') -->
+  <div class="composer" id="composer" style="left:340px; top:170px;">
+    <div class="ch"><span class="badge">3</span><span class="src">PriceCard · Price.tsx:42</span></div>
+    <textarea placeholder="Add a note about this element…">padding feels too tight on mobile</textarea>
+    <div class="cf"><button class="add">Add &#9656;</button></div>
+  </div>
+
+  <!-- variation picker -->
+  <div class="panel">
+    <h2>Mode control style</h2>
+    <p>Both live in the HUD and flip voice⇄text. Pick the treatment you like — the HUD updates live.</p>
+    <div class="row">
+      <button class="v active" data-v="seg">A · Segmented 🎤|✎</button>
+      <button class="v" data-v="icon">B · Single toggle icon</button>
+    </div>
+    <div class="hint" id="hint">A: both modes always visible, current one highlighted.</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const hud = document.getElementById('hud');
+  const bubble = document.getElementById('bubble');
+  const grip = document.getElementById('grip');
+  const slot = document.getElementById('modeslot');
+  const composer = document.getElementById('composer');
+  const toastEl = document.getElementById('toast');
+  let mode = 'voice';
+  let variation = 'seg';
+
+  function toast(msg){ toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.classList.remove('show'),1500); }
+
+  const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
+  const PEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+  function renderMode(){
+    hud.classList.toggle('voice', mode==='voice');
+    hud.classList.toggle('text', mode==='text');
+    composer.classList.toggle('show', mode==='text');
+    if (variation==='seg'){
+      slot.innerHTML =
+        '<div class="seg">' +
+          '<button class="'+(mode==='voice'?'on':'')+'" data-m="voice">'+MIC+'Voice</button>' +
+          '<button class="'+(mode==='text'?'on texton':'')+'" data-m="text">'+PEN+'Text</button>' +
+        '</div>';
+      slot.querySelectorAll('button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+    } else {
+      // single toggle icon: shows the OTHER mode as the action
+      const toText = mode==='voice';
+      slot.innerHTML =
+        '<button class="ctl modeicon" title="'+(toText?'Switch to text':'Switch to voice')+'">' +
+          (toText?PEN:MIC) + '<span class="lbl">'+(toText?'Text':'Voice')+'</span></button>';
+      slot.querySelector('button').onclick=()=>setMode(toText?'text':'voice');
+    }
+  }
+  function setMode(m){ if(m===mode) return; mode=m; renderMode(); toast(m==='voice'?'🎤 voice — talk & click':'✎ text — click an element, type a note'); }
+
+  // variation picker
+  document.querySelectorAll('.panel .v').forEach(btn=>{
+    btn.onclick=()=>{
+      document.querySelectorAll('.panel .v').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active'); variation=btn.dataset.v;
+      document.getElementById('hint').textContent = variation==='seg'
+        ? 'A: both modes always visible, current one highlighted.'
+        : 'B: one compact button showing the mode you can switch TO; tap to flip.';
+      renderMode();
+    };
+  });
+
+  // open/close
+  bubble.onclick=()=>{ bubble.style.display='none'; hud.style.display='flex'; };
+  document.getElementById('end').onclick=()=>{ hud.style.display='none'; composer.classList.remove('show'); bubble.style.display='flex'; toast('→ opens review'); };
+  document.getElementById('pause').onclick=()=>toast('paused');
+
+  // ---- dragging by the grip ----
+  let drag=null;
+  grip.addEventListener('mousedown',(e)=>{
+    const r=hud.getBoundingClientRect();
+    drag={dx:e.clientX-r.left, dy:e.clientY-r.top};
+    hud.style.left=r.left+'px'; hud.style.top=r.top+'px'; hud.style.right='auto'; hud.style.bottom='auto';
+    hud.classList.add('dragging'); e.preventDefault();
+  });
+  window.addEventListener('mousemove',(e)=>{
+    if(!drag) return;
+    let x=e.clientX-drag.dx, y=e.clientY-drag.dy;
+    x=Math.max(6,Math.min(x, innerWidth-hud.offsetWidth-6));
+    y=Math.max(6,Math.min(y, innerHeight-hud.offsetHeight-6));
+    hud.style.left=x+'px'; hud.style.top=y+'px';
+  });
+  window.addEventListener('mouseup',()=>{ if(drag){drag=null; hud.classList.remove('dragging');} });
+
+  renderMode();
+</script>
+</body>
+</html>

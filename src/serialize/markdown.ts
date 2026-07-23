@@ -1,18 +1,32 @@
 import type { ActionEvent, SessionResult } from '../types'
 import { fmtTime } from '../util/time'
 
+function srcOf(el: ActionEvent['element']): string {
+  const s = el.source
+  if (s) {
+    return `${s.fileName}${s.lineNumber != null ? `:${s.lineNumber}` : ''}${
+      s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
+    }`
+  }
+  return el.selector ?? el.outerHTMLSnippet
+}
+
 function actionLine(ev: ActionEvent): string {
   const el = ev.element
   const label = el.component ?? `<${el.tag}>`
-  const s = el.source
-  const src = s
-    ? ` — ${s.fileName}${s.lineNumber != null ? `:${s.lineNumber}` : ''}${
-        s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
-      }`
-    : ` — ${el.selector ?? el.outerHTMLSnippet}`
-  const note = ev.note ? ` — "${ev.note}"` : ''
-  const txt = !ev.note && el.text ? ` — "${el.text}"` : ''
-  return `[${fmtTime(ev.t)}] → #${ev.n} ${label}${src}${note}${txt}`
+  const ref = `${label} (${srcOf(el)})`
+  const t = fmtTime(ev.t)
+
+  // Text mode: the note is feedback the user explicitly attached to this element.
+  // State that binding outright so the agent doesn't have to infer which comment
+  // maps to which component (the inference voice mode needs by necessity).
+  if (ev.note) {
+    return `[${t}] #${ev.n} FEEDBACK on ${ref}: "${ev.note}"`
+  }
+  // No note (e.g. a voice-mode pin): just a reference marker, with the element's
+  // own visible text as context (clearly labelled so it isn't read as feedback).
+  const txt = el.text ? ` — text: "${el.text}"` : ''
+  return `[${t}] #${ev.n} referenced ${ref}${txt}`
 }
 
 /**

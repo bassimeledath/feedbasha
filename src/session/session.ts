@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   SessionResult,
   STTProvider,
+  STTSegmentEvent,
 } from '../types'
 import { createProvider } from '../stt'
 import { buildElementContext } from '../capture/element'
@@ -47,9 +48,13 @@ export class Session {
   private lastY = -1
 
   private mode: CaptureMode = 'voice'
+  private hudDragging = false
+  private spanEventStart = 0 // index in `events` where the current recording span began
   // Text-mode compose state: the element being annotated + its (resolving) context.
   private composing = false
+  private composeToken = 0 // invalidates a superseded compose's async element lookup
   private composeEl: Element | null = null
+  private draft: { el: Element; text: string } | null = null // cached note text per element
   private composeCtx: ElementContext | null = null
   private composeCtxPromise: Promise<ElementContext> | null = null
 
@@ -72,9 +77,10 @@ export class Session {
   constructor(private config: FeedbashaConfig) {
     this.widget = new Widget(config.position ?? 'bottom-right', config.dock ?? true, {
       onStart: () => void this.start(),
-      onStartText: () => this.startText(),
       onStop: () => void this.stop(),
+      onClear: () => this.reset(), // wipe the log + return to the idle mic
       onTogglePause: () => this.togglePause(),
+      onToggleMode: () => void this.switchMode(),
       onResume: () => void this.resume(),
       onClose: () => this.closeReview(),
       onCopy: () => void this.copy(),
@@ -86,8 +92,8 @@ export class Session {
       onHover: (id, on) => this.hoverElement(id, on),
       onComposeAdd: (text) => this.commitCompose(text),
       onComposeCancel: () => this.cancelCompose(),
+      onHudDrag: (active) => this.setHudDragging(active),
     })
-    this.widget.setCanSwitch(true) // offer "or switch to text" at idle
   }
 
   private clock = (): number =>
@@ -105,16 +111,76 @@ export class Session {
     await this.arm()
   }
 
-  /** Begin a text-mode session: no mic — click an element, type a note. */
-  startText(): void {
-    if (this.phase !== 'idle' || this.destroyed) return
-    if (this.pendingReview) {
-      this.reopenReview()
+  /** Flip the input method mid-session, keeping one continuous log + the clock.
+   *  voice → text silences the mic; text → voice brings it back. */
+  private async switchMode(): Promise<void> {
+    if (this.phase !== 'recording') return
+    if (this.composing) this.endCompose()
+    if (this.paused) this.resumeCapture() // choosing an input mode implies resuming
+
+    if (this.mode === 'text') {
+      // text → voice: bring the mic back (may degrade to click-only).
+      this.mode = 'voice'
+      this.widget.setMode('voice')
+      await this.startVoiceProvider()
+    } else {
+      // voice/click-only → text: silence the mic; flush any final segment.
+      const prev = this.provider
+      this.provider = null
+      this.mode = 'text'
+      this.widget.setMode('text')
+      this.widget.setCaption('')
+      if (prev) {
+        // Dispose only if the user hasn't flipped back to voice and re-acquired the
+        // SAME instance meanwhile (custom providers are reused) — else we'd tear
+        // down the newly-active provider.
+        const disposeIfStale = () => {
+          if (this.provider !== prev) prev.dispose()
+        }
+        void prev.stop().then(disposeIfStale).catch(disposeIfStale)
+      }
+    }
+  }
+
+  /** (Re)acquire an STT provider while already recording (used by text → voice). */
+  private async startVoiceProvider(): Promise<void> {
+    const token = this.runToken
+    this.widget.setNotice('Starting mic…')
+    let provider: STTProvider | null = null
+    try {
+      provider = await createProvider(this.config.stt)
+    } catch {
+      provider = null
+    }
+    if (token !== this.runToken || this.destroyed || this.mode !== 'voice' || this.phase !== 'recording') {
+      provider?.dispose()
       return
     }
-    this.startedWall = Date.now()
-    this.accumSec = 0
-    this.enterText()
+    if (!provider) {
+      this.switchToClickOnly('Mic unavailable, capturing clicks only.')
+      return
+    }
+    this.provider = provider
+    const seg = this.sttSegmentHandlers(token)
+    try {
+      await provider.start(
+        {
+          onReady: () => {
+            if (token === this.runToken && this.mode === 'voice') this.widget.setMode('voice')
+          },
+          onProgress: (m) => {
+            if (token === this.runToken && this.mode === 'voice') this.widget.setNotice(m)
+          },
+          ...seg,
+          onNotice: (m) => {
+            if (token === this.runToken) this.switchToClickOnly(m)
+          },
+        },
+        this.clock,
+      )
+    } catch {
+      this.switchToClickOnly('Mic failed, capturing clicks only.')
+    }
   }
 
   /** Enter (or resume) text-mode recording — the mic-free capture path. */
@@ -128,6 +194,11 @@ export class Session {
     this.beginRecording('text')
   }
 
+  private setHudDragging(active: boolean): void {
+    this.hudDragging = active
+    if (active) this.widget.highlight(null)
+  }
+
   /** Close the review to the idle bubble, keeping the session so the mic can
    *  reopen it (distinct from "start a new session", which discards it). */
   private closeReview(): void {
@@ -138,7 +209,6 @@ export class Session {
     this.widget.enableYield(false)
     this.widget.setPinsVisible(false)
     this.widget.setBubbleReopen(true)
-    this.widget.setCanSwitch(false)
     this.widget.setPhase('idle')
   }
 
@@ -168,14 +238,19 @@ export class Session {
     this.widget.enableYield(false)
     this.widget.setPhase('starting')
 
-    const provider = await createProvider(this.config.stt)
+    let provider: STTProvider | null = null
+    try {
+      provider = await createProvider(this.config.stt)
+    } catch {
+      provider = null // a custom provider's isAvailable() rejected — degrade cleanly
+    }
     if (token !== this.runToken || this.destroyed) {
       provider?.dispose()
       return
     }
     this.provider = provider
     if (!provider) {
-      this.beginRecording('clickonly', 'Speech recognition unavailable — capturing clicks only.')
+      this.beginRecording('clickonly', 'Speech recognition unavailable, capturing clicks only.')
       return
     }
 
@@ -200,7 +275,7 @@ export class Session {
         ms,
       )
     }
-    armTimeout(5000, 'Mic not responding — capturing clicks only.')
+    armTimeout(5000, 'Mic not responding, capturing clicks only.')
 
     try {
       await provider.start(
@@ -211,17 +286,9 @@ export class Session {
             // show status, and extend the window instead of falling back.
             if (token !== this.runToken || settled) return
             this.widget.setNotice(m)
-            armTimeout(120000, 'Speech model took too long — capturing clicks only.')
+            armTimeout(120000, 'Speech model took too long, capturing clicks only.')
           },
-          onInterim: (t) => {
-            if (token === this.runToken && this.phase === 'recording' && !this.paused)
-              this.widget.setCaption(t)
-          },
-          onSegment: (s) => {
-            if (token === this.runToken && !this.paused) {
-              this.events.push({ id: ++this.seq, kind: 'speech', t: s.t, text: s.text })
-            }
-          },
+          ...this.sttSegmentHandlers(token),
           onNotice: (m) => {
             if (token !== this.runToken) return
             if (!settled) settle(() => this.beginRecording('clickonly', m))
@@ -232,8 +299,40 @@ export class Session {
       )
     } catch {
       settle(() =>
-        this.beginRecording('clickonly', 'Speech recognition failed — capturing clicks only.'),
+        this.beginRecording('clickonly', 'Speech recognition failed, capturing clicks only.'),
       )
+    }
+  }
+
+  /** Interim-caption + finalized-segment handlers, shared by initial arm and
+   *  mid-session mic (re)start. Interim only paints while in voice mode. */
+  private sttSegmentHandlers(token: number): {
+    onInterim: (t: string) => void
+    onSegment: (s: STTSegmentEvent) => void
+  } {
+    return {
+      onInterim: (t) => {
+        if (
+          token === this.runToken &&
+          this.phase === 'recording' &&
+          !this.paused &&
+          this.mode === 'voice'
+        ) {
+          this.widget.setCaption(t)
+        }
+      },
+      onSegment: (s) => {
+        if (token !== this.runToken) return
+        // Keep the segment even if we just paused — a final result can arrive from
+        // the provider slightly after pause() and must not be dropped.
+        this.events.push({ id: ++this.seq, kind: 'speech', t: s.t, text: s.text })
+        // Live feedback: echo the freshly transcribed line into the caption. For
+        // providers without interim (e.g. Whisper on WASM) this is the ONLY realtime
+        // signal — otherwise the caption stays empty until the review sidebar.
+        if (!this.paused && this.phase === 'recording' && this.mode === 'voice') {
+          this.widget.setCaption(s.text)
+        }
+      },
     }
   }
 
@@ -246,6 +345,7 @@ export class Session {
     this.phase = 'recording'
     this.mode = mode
     this.paused = false
+    this.spanEventStart = this.events.length // only this span's events get time-sorted
     this.spanStart = performance.now()
     this.spanActive = true
     this.widget.setPhase('recording')
@@ -296,6 +396,9 @@ export class Session {
     this.provider?.resume?.()
     document.body.style.cursor = 'crosshair'
     this.widget.setPaused(false)
+    // setPaused(true) hid the caption; re-apply the mode so the active mode's
+    // caption/notice comes back (otherwise voice captions stay hidden post-pause).
+    this.widget.setMode(this.mode)
   }
 
   private switchToClickOnly(msg: string): void {
@@ -349,6 +452,7 @@ export class Session {
    *  Called on mousemove and on scroll/resize so the box never goes stale. */
   private refreshHover(): void {
     if (this.lastX < 0) return
+    if (this.hudDragging) return // don't chase the cursor while moving the HUD
     if (this.composing) return // highlight stays locked on the element being annotated
     if (this.paused && this.reselectId == null) {
       this.widget.highlight(null)
@@ -373,7 +477,21 @@ export class Session {
 
   private handleClick(e: MouseEvent): void {
     if (this.phase !== 'recording' || this.paused) return
-    if (this.composing) return // locked on the current element until Add/Cancel
+
+    // While composing, a click outside the composer dismisses it (draft is cached
+    // so an accidental click-away doesn't lose typed text). A click on another
+    // element re-anchors the composer there.
+    if (this.composing) {
+      const at = document.elementFromPoint(e.clientX, e.clientY)
+      if (at && this.widget.contains(at)) return // inside the composer — let it handle
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const next = this.mode === 'text' ? this.pick(e.clientX, e.clientY) : null
+      this.dismissCompose() // stashes a non-empty draft for the current element
+      if (next) this.beginCompose(next)
+      return
+    }
+
     const el = this.pick(e.clientX, e.clientY)
     if (!el) return
     e.preventDefault()
@@ -416,12 +534,17 @@ export class Session {
     const rect = rectOf(el)
     this.composeCtx = placeholder(el, rect)
     this.widget.highlight(rect) // freeze the highlight on the target
-    this.widget.openComposer(rect, headerFor(this.composeCtx))
+    // Restore a cached draft if this same element was dismissed mid-note.
+    const initial = this.draft && this.draft.el === el && el.isConnected ? this.draft.text : ''
+    this.widget.openComposer(rect, headerFor(this.composeCtx), initial)
 
-    const token = this.runToken
+    // Per-compose generation: if this compose is cancelled/committed and another
+    // begins, a late element lookup from the old one must not overwrite the new
+    // composer's context/header.
+    const gen = ++this.composeToken
     this.composeCtxPromise = buildElementContext(el)
       .then((ctx) => {
-        if (token === this.runToken && !this.destroyed) {
+        if (gen === this.composeToken && !this.destroyed) {
           this.composeCtx = ctx
           this.widget.setComposerHeader(headerFor(ctx))
         }
@@ -454,6 +577,7 @@ export class Session {
     this.events.push(ev)
     this.liveEls.set(id, el)
     this.widget.addPin(id, n, rect)
+    if (this.draft?.el === el) this.draft = null // committed — drop its cached draft
 
     // If the context is still resolving, patch the event's element when it lands.
     const token = this.runToken
@@ -472,13 +596,28 @@ export class Session {
     this.endCompose()
   }
 
+  /** Explicit discard (Cancel button / Esc): drop the current element's draft too. */
   private cancelCompose(): void {
     if (!this.composing) return
+    if (this.draft?.el === this.composeEl) this.draft = null
+    this.endCompose()
+  }
+
+  /** Accidental dismiss (click outside): keep the typed text as a per-element draft
+   *  so re-clicking the element restores it. */
+  private dismissCompose(): void {
+    if (!this.composing) return
+    const text = this.widget.getComposerDraft().trim()
+    if (text && this.composeEl) {
+      this.draft = { el: this.composeEl, text }
+      this.widget.showToast('Draft kept. Click the element to resume.')
+    }
     this.endCompose()
   }
 
   private endCompose(): void {
     this.composing = false
+    this.composeToken++ // invalidate any still-resolving lookup for this compose
     this.composeEl = null
     this.composeCtx = null
     this.composeCtxPromise = null
@@ -516,6 +655,8 @@ export class Session {
         this.events.splice(i, 1)
         this.widget.removePin(ev.id)
         this.liveEls.delete(ev.id)
+        // Surface the otherwise-silent deletion (Backspace is a reflex key).
+        this.widget.showToast(`Removed pin ${ev.n}`)
         return
       }
     }
@@ -551,9 +692,12 @@ export class Session {
     await Promise.allSettled(this.pending)
     if (token !== this.runToken || this.destroyed) return
 
-    // Order the log chronologically on entering review; the user can then drag
-    // to reorder, and that manual order is preserved from here on.
-    this.events.sort((a, b) => a.t - b.t)
+    // Sort only THIS span's events by capture time (STT callbacks arrive out of
+    // order). The prefix from earlier spans keeps whatever order the user set in
+    // review — so drag-reordering survives a Resume → … → End round-trip.
+    const head = this.events.slice(0, this.spanEventStart)
+    const tail = this.events.slice(this.spanEventStart).sort((a, b) => a.t - b.t)
+    this.events = [...head, ...tail]
     this.widget.renderReview(this.buildResult())
     // Panel yields (fades + click-through) when the cursor is over the app.
     this.widget.enableYield(true)
@@ -680,7 +824,7 @@ export class Session {
     const ok = await copyText(md)
     if (ok) {
       this.widget.showCopied()
-      this.widget.showToast('Copied context to clipboard — paste into your agent')
+      this.widget.showToast('Copied context to clipboard. Paste it into your agent.')
       try {
         this.config.onCopy?.(md, result)
       } catch (err) {
@@ -706,8 +850,9 @@ export class Session {
     this.widget.clearPins()
     this.widget.setPinsVisible(true)
     this.widget.setBubbleReopen(false)
-    this.widget.setCanSwitch(true)
     this.mode = 'voice'
+    this.hudDragging = false
+    this.draft = null
     this.events = []
     this.liveEls.clear()
     this.pending = []

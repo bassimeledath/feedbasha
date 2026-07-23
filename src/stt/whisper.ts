@@ -25,6 +25,9 @@ export interface WhisperOptions {
 
 const DEFAULT_MODEL = 'Xenova/whisper-base.en'
 const TARGET_RATE = 16000
+const NOISE_MARGIN = 2.5 // speech must exceed the ambient floor by this factor
+const ONSET_FRAMES = 2 // consecutive loud frames required before an utterance starts
+const PREROLL_FRAMES = 3 // recent frames prepended on onset so the first word isn't clipped
 
 /**
  * Offline speech-to-text via transformers.js Whisper. Runs entirely locally
@@ -42,6 +45,7 @@ export class WhisperProvider implements STTProvider {
   private stream: MediaStream | null = null
   private ctx: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
+  private hp: BiquadFilterNode | null = null
   private proc: ScriptProcessorNode | null = null
   private sink: GainNode | null = null
 
@@ -52,7 +56,9 @@ export class WhisperProvider implements STTProvider {
 
   // VAD + utterance state
   private frames: Float32Array[] = []
-  private prevFrame: Float32Array | null = null
+  private preRoll: Float32Array[] = [] // rolling recent frames, prepended on speech onset
+  private noiseFloor = 0 // adaptive ambient RMS (EMA, updated while idle)
+  private loudRun = 0 // consecutive loud frames (onset debounce)
   private speaking = false
   private speechMs = 0
   private silenceMs = 0
@@ -86,7 +92,13 @@ export class WhisperProvider implements STTProvider {
     cb.onProgress?.('Requesting microphone…')
 
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      // Let the browser do its own denoise/AGC/echo cancellation first.
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
     })
     if (!this.running) {
       this.teardownAudio()
@@ -98,12 +110,18 @@ export class WhisperProvider implements STTProvider {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
     this.source = this.ctx.createMediaStreamSource(this.stream)
+    // High-pass ~90 Hz to cut low-frequency rumble (HVAC, desk thumps, plosives)
+    // before it reaches the VAD/model.
+    this.hp = this.ctx.createBiquadFilter()
+    this.hp.type = 'highpass'
+    this.hp.frequency.value = 90
     this.proc = this.ctx.createScriptProcessor(2048, 1, 1)
     this.proc.onaudioprocess = (e) => this.onAudio(e.inputBuffer.getChannelData(0))
     // A muted sink keeps the ScriptProcessor firing without echoing the mic.
     this.sink = this.ctx.createGain()
     this.sink.gain.value = 0
-    this.source.connect(this.proc)
+    this.source.connect(this.hp)
+    this.hp.connect(this.proc)
     this.proc.connect(this.sink)
     this.sink.connect(this.ctx.destination)
 
@@ -131,30 +149,54 @@ export class WhisperProvider implements STTProvider {
     if (!this.running) return
     const frameMs = (frame.length / this.sampleRate) * 1000
     const copy = frame.slice()
-    const loud = rms(frame) >= (this.opts.speechThreshold ?? 0.006)
+    const energy = rms(frame)
+
+    // A frame counts as speech only if it clears both an absolute floor AND a
+    // margin above the adaptive ambient-noise floor — so a noisy room raises the
+    // bar instead of constantly tripping the VAD.
+    const floor = this.opts.speechThreshold ?? 0.006
+    const threshold = Math.max(floor, this.noiseFloor * NOISE_MARGIN)
+    const loud = energy >= threshold
+
+    // Track the ambient floor from non-speech frames (EMA).
+    if (!this.speaking && !loud) {
+      this.noiseFloor = this.noiseFloor === 0 ? energy : this.noiseFloor * 0.95 + energy * 0.05
+    }
+
+    // Keep a short rolling pre-roll so onset debounce doesn't clip the first word.
+    this.preRoll.push(copy)
+    if (this.preRoll.length > PREROLL_FRAMES) this.preRoll.shift()
 
     if (loud) {
-      if (!this.speaking) {
+      this.loudRun += 1
+      // Onset debounce: require a few consecutive loud frames before committing,
+      // so a single cough/click/keystroke doesn't start an utterance.
+      if (!this.speaking && this.loudRun >= ONSET_FRAMES) {
         this.speaking = true
         this.speechMs = 0
         this.silenceMs = 0
         this.uttStart = this.clock()
-        if (this.prevFrame) this.frames.push(this.prevFrame) // small pre-roll
+        this.frames.push(...this.preRoll) // include the debounce frames + lead-in
+        this.preRoll = []
       }
-      this.speechMs += frameMs
-      this.silenceMs = 0
-      this.frames.push(copy)
-      this.maybeInterim()
-    } else if (this.speaking) {
-      this.silenceMs += frameMs
-      this.frames.push(copy) // keep trailing audio
-      if (this.silenceMs >= (this.opts.silenceMs ?? 650)) this.finalize()
+      if (this.speaking) {
+        this.speechMs += frameMs
+        this.silenceMs = 0
+        this.frames.push(copy)
+        this.maybeInterim()
+      }
+    } else {
+      this.loudRun = 0
+      if (this.speaking) {
+        this.silenceMs += frameMs
+        this.frames.push(copy) // keep trailing audio
+        if (this.silenceMs >= (this.opts.silenceMs ?? 650)) this.finalize()
+      }
     }
 
     if (this.speaking && this.utteranceSec() >= (this.opts.maxUtteranceSec ?? 20)) {
       this.finalize()
     }
-    this.prevFrame = copy
   }
 
   private utteranceSec(): number {
@@ -182,11 +224,12 @@ export class WhisperProvider implements STTProvider {
     this.speaking = false
     this.speechMs = 0
     this.silenceMs = 0
+    this.loudRun = 0
     this.frames = []
     if (speech < (this.opts.minSpeechMs ?? 250)) return
 
     const p = this.run(audio, (text) => {
-      if (text) this.cb?.onSegment?.({ t: start, end, text })
+      if (text && !isHallucination(text, speech)) this.cb?.onSegment?.({ t: start, end, text })
     })
     this.pending.push(p)
     void p.finally(() => {
@@ -213,7 +256,9 @@ export class WhisperProvider implements STTProvider {
     this.busy = true
     try {
       const out = await t(audio)
-      if (this.running) emit((out?.text ?? '').trim())
+      // Always emit — the caller decides whether the result is still wanted. Gating
+      // on `running` here dropped the final utterance drained during stop().
+      emit((out?.text ?? '').trim())
     } catch {
       /* skip this chunk */
     } finally {
@@ -224,19 +269,23 @@ export class WhisperProvider implements STTProvider {
   async stop(): Promise<void> {
     this.running = false
     if (this.speaking && this.speechMs >= (this.opts.minSpeechMs ?? 250)) {
-      // flush the in-progress utterance so its text lands in the log
+      // Flush the in-progress utterance so its text lands in the log. run() no
+      // longer gates emit on `running`, so this final result is delivered even
+      // though capture has stopped.
+      const speech = this.speechMs
       const audio = this.collect()
       const start = this.uttStart
       const end = this.clock()
-      this.running = true // allow this last emit through
-      const p = this.run(audio, (text) => {
-        if (text) this.cb?.onSegment?.({ t: start, end, text })
-      })
-      this.pending.push(p)
-      this.running = false
+      this.pending.push(
+        this.run(audio, (text) => {
+          if (text && !isHallucination(text, speech)) this.cb?.onSegment?.({ t: start, end, text })
+        }),
+      )
     }
     this.speaking = false
     this.frames = []
+    this.preRoll = []
+    this.loudRun = 0
     await Promise.allSettled(this.pending)
     this.teardownAudio()
   }
@@ -245,6 +294,8 @@ export class WhisperProvider implements STTProvider {
     // Suspend the audio graph (mic frames stop flowing) and drop any partial
     // utterance so it doesn't span the gap.
     this.frames = []
+    this.preRoll = []
+    this.loudRun = 0
     this.speaking = false
     if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend()
   }
@@ -257,6 +308,9 @@ export class WhisperProvider implements STTProvider {
     this.running = false
     this.speaking = false
     this.frames = []
+    this.preRoll = []
+    this.loudRun = 0
+    this.noiseFloor = 0
     this.pending = []
     this.transcriber = null
     this.teardownAudio()
@@ -273,6 +327,7 @@ export class WhisperProvider implements STTProvider {
     }
     try {
       this.source?.disconnect()
+      this.hp?.disconnect()
       this.sink?.disconnect()
     } catch {
       /* noop */
@@ -281,10 +336,39 @@ export class WhisperProvider implements STTProvider {
     this.stream?.getTracks().forEach((tr) => tr.stop())
     this.proc = null
     this.source = null
+    this.hp = null
     this.sink = null
     this.ctx = null
     this.stream = null
   }
+}
+
+// Whisper confidently transcribes silence/noise into a small set of stock phrases
+// ("thank you", "you", music notes, bracketed tags). Drop these when the utterance
+// was short/low-content; the length guard avoids nuking genuine brief speech.
+const HALLUCINATIONS = new Set([
+  'you',
+  'thank you',
+  'thank you.',
+  'thanks for watching',
+  'thanks for watching.',
+  'thanks for watching!',
+  'thank you for watching.',
+  'please subscribe',
+  'bye',
+  'bye.',
+  'so',
+  'okay',
+  'okay.',
+])
+
+function isHallucination(text: string, speechMs: number): boolean {
+  const t = text.trim().toLowerCase()
+  if (!t) return true
+  if (/^[\s.,!?…♪~–—-]+$/.test(t)) return true // pure punctuation / music notes
+  if (/^\[.*\]$/.test(t) || /^\(.*\)$/.test(t)) return true // [BLANK_AUDIO], (silence)
+  if (speechMs < 1200 && HALLUCINATIONS.has(t)) return true // stock phrase on a short blip
+  return false
 }
 
 /** Build a transcriber pipeline (dynamic import + WebGPU→WASM fallback). */
@@ -297,7 +381,7 @@ async function buildPipeline(
   try {
     transformers = await import('@huggingface/transformers')
   } catch {
-    cb.onNotice?.('Local speech model not installed — capturing clicks only.')
+    cb.onNotice?.('Local speech model not installed, capturing clicks only.')
     throw new Error('feedbasha: @huggingface/transformers is not installed')
   }
 
