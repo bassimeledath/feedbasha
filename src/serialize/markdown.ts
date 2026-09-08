@@ -1,7 +1,7 @@
-import type { ActionEvent, SessionResult } from '../types'
+import type { Annotation, ElementContext, SessionResult } from '../types'
 import { fmtTime } from '../util/time'
 
-function srcOf(el: ActionEvent['element']): string {
+function srcOf(el: ElementContext): string {
   const s = el.source
   if (s) {
     return `${s.fileName}${s.lineNumber != null ? `:${s.lineNumber}` : ''}${
@@ -11,51 +11,55 @@ function srcOf(el: ActionEvent['element']): string {
   return el.selector ?? el.outerHTMLSnippet
 }
 
-function actionLine(ev: ActionEvent): string {
-  const el = ev.element
-  const label = el.component ?? `<${el.tag}>`
-  const ref = `${label} (${srcOf(el)})`
-  const t = fmtTime(ev.t)
-
-  // Text mode: the note is feedback the user explicitly attached to this element.
-  // State that binding outright so the agent doesn't have to infer which comment
-  // maps to which component (the inference voice mode needs by necessity).
-  if (ev.note) {
-    return `[${t}] #${ev.n} FEEDBACK on ${ref}: "${ev.note}"`
-  }
-  // No note (e.g. a voice-mode pin): just a reference marker, with the element's
-  // own visible text as context (clearly labelled so it isn't read as feedback).
-  const txt = el.text ? ` — text: "${el.text}"` : ''
-  return `[${t}] #${ev.n} referenced ${ref}${txt}`
+function elementLabel(el: ElementContext): string {
+  return `${el.component ?? `<${el.tag}>`} — ${srcOf(el)}`
 }
 
-/**
- * Chronological session log: each line is either something the user said or an
- * element they selected, in order. `redact`, if provided, scrubs the text once.
- */
-export function toMarkdown(result: SessionResult, redact?: (t: string) => string): string {
-  const events = result.events
-  const refs = events.filter((e) => e.kind === 'action').length
-  const out: string[] = []
-
-  out.push(
-    `# feedbasha session — ${fmtTime(result.durationSec)}, ${refs} element${refs !== 1 ? 's' : ''} referenced`,
-  )
-  out.push('')
-
-  if (events.length === 0) {
-    out.push('_(nothing captured)_')
-  } else {
-    for (const ev of events) {
-      if (ev.kind === 'speech') {
-        const t = ev.text.trim()
-        if (t) out.push(`[${fmtTime(ev.t)}] ${t}`)
-      } else {
-        out.push(actionLine(ev))
-      }
-    }
+function annotationBlock(annotation: Annotation): string[] {
+  const input = annotation.input === 'voice' ? 'voice' : 'text'
+  const lines: string[] = []
+  if (annotation.target.kind === 'element') {
+    const el = annotation.target.element
+    lines.push(`## ${annotation.n}. ${el.component ?? `<${el.tag}>`} — ${input}`)
+    lines.push('', `“${annotation.note.trim()}”`, '', `Source: ${srcOf(el)}`)
+    if (el.text) lines.push(`Element text: “${el.text}”`)
+    return lines
   }
 
-  const md = out.join('\n').trim()
-  return redact ? redact(md) : md
+  const { rect, screenshot, elements, viewport } = annotation.target
+  lines.push(`## ${annotation.n}. Region — ${input}`)
+  lines.push('', `“${annotation.note.trim()}”`, '')
+  lines.push(`Region: x=${Math.round(rect.x)}, y=${Math.round(rect.y)}, ${Math.round(rect.width)}×${Math.round(rect.height)} CSS px`)
+  if (viewport) {
+    lines.push(`Page: ${viewport.url}`, `Capture viewport: ${viewport.width}×${viewport.height} CSS px; scroll: ${viewport.scrollX}, ${viewport.scrollY}; pixel ratio: ${viewport.devicePixelRatio}`)
+  }
+  if (screenshot?.reference) lines.push(`Screenshot: ${screenshot.reference}`)
+  else lines.push(screenshot ? 'Screenshot: captured locally; not attached to this text export.' : 'Screenshot: unavailable.')
+  if (elements.length) {
+    lines.push('', 'Components:')
+    for (const el of elements) {
+      lines.push(`- ${elementLabel(el)}`)
+      if (el.selector) lines.push(`  Selector: ${el.selector}`)
+      if (el.text) lines.push(`  Text: ${el.text}`)
+    }
+  }
+  return lines
+}
+
+/** Serialize one self-contained block per target-bound annotation. */
+export function toMarkdown(result: SessionResult, redact?: (text: string) => string): string {
+  const count = result.annotations.length
+  const out = [
+    `# Karen feedback — ${fmtTime(result.durationSec)}, ${count} item${count === 1 ? '' : 's'}`,
+    '',
+  ]
+
+  if (!count) out.push('_(nothing captured)_')
+  result.annotations.forEach((annotation, index) => {
+    if (index) out.push('', '---', '')
+    out.push(...annotationBlock(annotation))
+  })
+
+  const markdown = out.join('\n').trim()
+  return redact ? redact(markdown) : markdown
 }

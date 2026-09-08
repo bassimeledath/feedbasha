@@ -13,7 +13,7 @@ export function App() {
         <OrderSummary />
       </div>
       <p className="foot">
-        Demo app for feedbasha — click the mic (bottom-right), then talk while clicking components.
+        Click Karen, choose an element or drag a region, then speak or type your feedback.
       </p>
     </div>
   )

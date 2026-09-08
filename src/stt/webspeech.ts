@@ -6,6 +6,7 @@ type AnyRecognition = {
   continuous: boolean
   interimResults: boolean
   onstart: (() => void) | null
+  onspeechstart: (() => void) | null
   onresult: ((e: any) => void) | null
   onerror: ((e: any) => void) | null
   onend: (() => void) | null
@@ -27,10 +28,10 @@ const TERMINAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture',
 
 function noticeFor(err: string): string {
   if (err === 'not-allowed' || err === 'service-not-allowed')
-    return 'Microphone blocked, capturing clicks only.'
-  if (err === 'audio-capture') return 'No microphone found, capturing clicks only.'
-  if (err === 'network') return 'Speech service unreachable, capturing clicks only.'
-  return 'Speech recognition unavailable, capturing clicks only.'
+    return 'Microphone blocked. Type your note instead.'
+  if (err === 'audio-capture') return 'No microphone found. Type your note instead.'
+  if (err === 'network') return 'Speech service unreachable. Type your note instead.'
+  return 'Speech recognition unavailable. Type your note instead.'
 }
 
 /**
@@ -52,6 +53,7 @@ export class WebSpeechProvider implements STTProvider {
   }
 
   async start(cb: STTCallbacks, clock: () => number): Promise<void> {
+    this.dispose()
     const Ctor = RecognitionCtor()
     if (!Ctor) throw new Error('Web Speech API unavailable')
     this.clock = clock
@@ -64,8 +66,10 @@ export class WebSpeechProvider implements STTProvider {
     rec.interimResults = true
 
     rec.onstart = () => cb.onReady?.()
+    rec.onspeechstart = () => cb.onActivity?.()
 
     rec.onresult = (e: any) => {
+      cb.onActivity?.()
       let interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i]
@@ -107,7 +111,7 @@ export class WebSpeechProvider implements STTProvider {
         rec.start()
       } catch {
         this.running = false
-        cb.onNotice?.('Speech recognition stopped, capturing clicks only.')
+        cb.onNotice?.('Speech recognition stopped. Type your note instead.')
       }
     }
 
@@ -127,10 +131,12 @@ export class WebSpeechProvider implements STTProvider {
         settled = true
         window.clearTimeout(to)
         rec.onstart = null
+        rec.onspeechstart = null
         rec.onresult = null
         rec.onerror = null
         rec.onend = null
-        this.rec = null
+        if (this.rec === rec) this.rec = null
+        try { rec.abort() } catch { /* Already ended. */ }
         resolve()
       }
       // keep onresult until `finish` so the final segment is still emitted
@@ -166,10 +172,12 @@ export class WebSpeechProvider implements STTProvider {
 
   dispose(): void {
     this.running = false
+    this.uttStart = null
     const rec = this.rec
     this.rec = null
     if (rec) {
       rec.onstart = null
+      rec.onspeechstart = null
       rec.onresult = null
       rec.onerror = null
       rec.onend = null

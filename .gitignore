@@ -3,6 +3,7 @@ dist/
 *.log
 .DS_Store
 .feedbasha/
+.karen/
 .dispatch/
 *.tgz
 examples/*/node_modules/

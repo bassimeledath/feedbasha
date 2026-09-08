@@ -1,14 +1,20 @@
-import type { ActionEvent, SessionResult, SourceLocation, SpeechEvent } from '../types'
+import type { Annotation, RegionTarget, SessionResult, SourceLocation, ViewportRect } from '../types'
 import { fmtTime } from '../util/time'
 import { CSS } from './styles'
+import { installFont } from './font'
+import karenIcon from './karen-icon.png'
+
+export type Phase = 'idle' | 'active' | 'review'
+export type CaptureMode = 'voice' | 'text'
+export type ComposerState = 'text' | 'preparing' | 'listening' | 'voice-paused' | 'finalizing' | 'unavailable'
 
 export interface WidgetHandlers {
   onStart(): void
-  onStop(): void
+  onReview(): void
   onClear(): void
   onTogglePause(): void
   onToggleMode(): void
-  onResume(): void
+  onResumeSession(): void
   onClose(): void
   onCopy(): void
   onDiscard(): void
@@ -17,755 +23,788 @@ export interface WidgetHandlers {
   onReorder(ids: number[]): void
   onReselect(id: number): void
   onHover(id: number, on: boolean): void
-  onComposeAdd(text: string): void
+  onPinHover(id: number, on: boolean): void
+  onPinEdit(id: number): void
+  onComposeAdd(): void
   onComposeCancel(): void
+  onComposeInput(text: string): void
+  onComposeResumeVoice(): void
   onHudDrag(active: boolean): void
+  onGestureStart(point: { x: number; y: number }, pointerId: number): void
+  onGestureMove(point: { x: number; y: number }, pointerId: number): void
+  onGestureEnd(point: { x: number; y: number }, pointerId: number): void
+  onGestureCancel(pointerId: number): void
 }
 
-export type Phase = 'idle' | 'starting' | 'recording' | 'review'
-export type CaptureMode = 'voice' | 'clickonly' | 'text'
-
-interface Rect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-const MIC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>`
+const KAREN_MARK = `<img class="fb-karen-mark" src="${karenIcon}" alt="" />`
+const MIC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>`
+const PENCIL_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`
 const PAUSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`
 const PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"/></svg>`
-const PENCIL_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`
-const GRIP_SVG = `<svg viewBox="0 0 12 18" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg>`
-const TRASH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`
-const HUD_POS_KEY = 'feedbasha:hud-pos'
+const GRIP_SVG = `<svg viewBox="0 0 12 18" fill="currentColor"><circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/><circle cx="3" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="3" cy="15" r="1.5"/><circle cx="9" cy="15" r="1.5"/></svg>`
+const TRASH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>`
+const HUD_POS_KEY = 'karen:hud-pos'
 
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => {
-    const m: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
-    return m[c] ?? c
-  })
+function esc(text: string): string {
+  return text.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char] ?? char)
 }
 
-function srcStr(s: SourceLocation): string {
-  const line = s.lineNumber != null ? `:${s.lineNumber}` : ''
-  const col = s.lineNumber != null && s.columnNumber != null ? `:${s.columnNumber}` : ''
-  return `${s.fileName}${line}${col}`
+function srcStr(source: SourceLocation): string {
+  const line = source.lineNumber == null ? '' : `:${source.lineNumber}`
+  const column = source.lineNumber == null || source.columnNumber == null ? '' : `:${source.columnNumber}`
+  return `${source.fileName}${line}${column}`
 }
 
-/** The card that the dragged item should be inserted before, given a cursor Y. */
-function afterElement(container: HTMLElement, y: number): HTMLElement | null {
-  const cards = Array.from(container.querySelectorAll<HTMLElement>('.fb-card:not(.dragging)'))
-  let closest: { offset: number; el: HTMLElement | null } = { offset: -Infinity, el: null }
-  for (const el of cards) {
-    const box = el.getBoundingClientRect()
-    const offset = y - box.top - box.height / 2
-    if (offset < 0 && offset > closest.offset) closest = { offset, el }
-  }
-  return closest.el
-}
-
-function place(el: HTMLElement, rect: Rect | null): void {
+function place(element: HTMLElement, rect: ViewportRect | null): void {
   if (!rect) {
-    el.style.display = 'none'
+    element.style.display = 'none'
     return
   }
-  el.style.display = 'block'
-  el.style.left = `${rect.x}px`
-  el.style.top = `${rect.y}px`
-  el.style.width = `${rect.width}px`
-  el.style.height = `${rect.height}px`
+  element.style.display = 'block'
+  element.style.left = `${rect.x}px`
+  element.style.top = `${rect.y}px`
+  element.style.width = `${rect.width}px`
+  element.style.height = `${rect.height}px`
 }
 
-function mkBtn(cls: string, html: string, title: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = cls
-  b.title = title
-  b.innerHTML = html
-  b.addEventListener('click', onClick)
-  return b
+function mkButton(className: string, html: string, title: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.className = className
+  button.innerHTML = html
+  button.title = title
+  button.addEventListener('click', onClick)
+  return button
 }
 
-function mkDel(onClick: () => void): HTMLButtonElement {
-  return mkBtn('fb-del', '&#10005;', 'Delete this item', onClick)
+function insertBeforeForY(container: HTMLElement, y: number): HTMLElement | null {
+  const cards = Array.from(container.querySelectorAll<HTMLElement>('.fb-card:not(.dragging)'))
+  let best: { offset: number; card: HTMLElement | null } = { offset: -Infinity, card: null }
+  for (const card of cards) {
+    const box = card.getBoundingClientRect()
+    const offset = y - box.top - box.height / 2
+    if (offset < 0 && offset > best.offset) best = { offset, card }
+  }
+  return best.card
 }
 
-/** All widget UI lives in a Shadow DOM host, isolated from (and excluded from) the page. */
 export class Widget {
   private host: HTMLElement
-  private pins = new Map<number, HTMLElement>()
-  private dragEl: HTMLElement | null = null
-  private yielded = false
-
-  private dragOff: { dx: number; dy: number } | null = null
-
+  private root: ShadowRoot
+  private capture: HTMLElement
   private highlightEl: HTMLElement
+  private selectionEl: HTMLElement
   private spotlightEl: HTMLElement
   private pinsEl: HTMLElement
   private widgetEl: HTMLElement
   private bubble: HTMLElement
   private pill: HTMLElement
   private grip: HTMLElement
-  private pauseBtn: HTMLElement
-  private dot: HTMLElement
+  private pauseButton: HTMLButtonElement
+  private modeSwitch: HTMLElement
+  private voiceButton: HTMLButtonElement
+  private textButton: HTMLButtonElement
+  private modeLabel: HTMLElement
+  private pauseState: HTMLElement
+  private timeElement: HTMLElement
+  private reviewCount: HTMLElement
   private tip: HTMLElement
-  private mswitch: HTMLElement
-  private mvoice: HTMLButtonElement
-  private mtext: HTMLButtonElement
-  private textActive = false
-  private confirm: HTMLElement
-  private confirmTitle: HTMLElement
-  private confirmMsg: HTMLElement
-  private confirmOk: HTMLButtonElement
-  private confirmAction: (() => void) | null = null
-  private pstate: HTMLElement
-  private modelbl: HTMLElement
-  private timeEl: HTMLElement
-  private caption: HTMLElement
-  private captext: HTMLElement
   private notice: HTMLElement
   private composer: HTMLElement
-  private cbadge: HTMLElement
-  private csrc: HTMLElement
-  private ctext: HTMLTextAreaElement
-  private caddBtn: HTMLButtonElement
+  private composerText: HTMLTextAreaElement
+  private composerPreview: HTMLImageElement
+  private composerPreviewUrl: string | null = null
+  private composerResize: ResizeObserver
+  private composerStatus: HTMLElement
+  private composerAdd: HTMLButtonElement
   private sheet: HTMLElement
-  private slist: HTMLElement
-  private copyBtn: HTMLButtonElement
+  private list: HTMLElement
+  private copyButton: HTMLButtonElement
   private fallback: HTMLTextAreaElement
-  private resumeBtn: HTMLElement
-  private discardBtn: HTMLElement
   private toast: HTMLElement
-  private toasttext: HTMLElement
+  private toastText: HTMLElement
+  private toastAction: HTMLButtonElement
+  private toastTimer: number | null = null
+  private pinPreview: HTMLElement
+  private confirm: HTMLElement
+  private confirmTitle: HTMLElement
+  private confirmMessage: HTMLElement
+  private confirmOkay: HTMLButtonElement
+  private confirmAction: (() => void) | null = null
+  private pins = new Map<number, HTMLElement>()
+  private dragOrder: HTMLElement[] = []
+  private dragCard: HTMLElement | null = null
+  private dragOffset: { dx: number; dy: number } | null = null
+  private yielded = false
+  private textMode = false
+  private selectionAnimation: Animation | null = null
 
   constructor(
     private position: 'bottom-right' | 'bottom-left',
     private dock: boolean,
-    private h: WidgetHandlers,
+    private handlers: WidgetHandlers,
   ) {
+    installFont()
     this.host = document.createElement('div')
     this.host.setAttribute('data-feedbasha', '')
-    const root = this.host.attachShadow({ mode: 'open' })
-
+    this.host.setAttribute('data-karen', '')
+    this.root = this.host.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
     style.textContent = CSS
-    root.appendChild(style)
-
+    this.root.appendChild(style)
     const tree = document.createElement('div')
     tree.className = 'fb-host'
     tree.innerHTML = this.template(position)
-    root.appendChild(tree)
+    this.root.appendChild(tree)
     document.body.appendChild(this.host)
 
-    const q = <T extends HTMLElement>(sel: string): T => tree.querySelector(sel) as T
-    this.highlightEl = q('[data-el="highlight"]')
-    this.spotlightEl = q('[data-el="spotlight"]')
-    this.pinsEl = q('[data-el="pins"]')
-    this.widgetEl = q('[data-el="widget"]')
-    this.bubble = q('[data-el="bubble"]')
-    this.pill = q('[data-el="pill"]')
-    this.grip = q('[data-el="grip"]')
-    this.pauseBtn = q('[data-el="pause"]')
-    this.dot = q('[data-el="dot"]')
-    this.tip = q('[data-el="tip"]')
-    this.mswitch = q('[data-el="mswitch"]')
-    this.mvoice = q<HTMLButtonElement>('[data-el="mvoice"]')
-    this.mtext = q<HTMLButtonElement>('[data-el="mtext"]')
-    this.confirm = q('[data-el="confirm"]')
-    this.confirmTitle = q('[data-el="confirm-title"]')
-    this.confirmMsg = q('[data-el="confirm-msg"]')
-    this.confirmOk = q<HTMLButtonElement>('[data-el="confirm-ok"]')
-    this.pstate = q('[data-el="pstate"]')
-    this.modelbl = q('[data-el="modelbl"]')
-    this.timeEl = q('[data-el="time"]')
-    this.caption = q('[data-el="caption"]')
-    this.captext = q('[data-el="captext"]')
-    this.notice = q('[data-el="notice"]')
-    this.composer = q('[data-el="composer"]')
-    this.cbadge = q('[data-el="cbadge"]')
-    this.csrc = q('[data-el="csrc"]')
-    this.ctext = q<HTMLTextAreaElement>('[data-el="ctext"]')
-    this.caddBtn = q<HTMLButtonElement>('[data-el="cadd"]')
-    this.sheet = q('[data-el="sheet"]')
-    this.slist = q('[data-el="slist"]')
-    this.copyBtn = q<HTMLButtonElement>('[data-el="copy"]')
-    this.fallback = q<HTMLTextAreaElement>('[data-el="fallback"]')
-    this.resumeBtn = q('[data-el="resume"]')
-    this.discardBtn = q('[data-el="discard"]')
-    this.toast = q('[data-el="toast"]')
-    this.toasttext = q('[data-el="toasttext"]')
+    const query = <T extends HTMLElement>(selector: string): T => tree.querySelector(selector) as T
+    this.capture = query('[data-el="capture"]')
+    this.highlightEl = query('[data-el="highlight"]')
+    this.selectionEl = query('[data-el="selection"]')
+    this.spotlightEl = query('[data-el="spotlight"]')
+    this.pinsEl = query('[data-el="pins"]')
+    this.widgetEl = query('[data-el="widget"]')
+    this.bubble = query('[data-el="bubble"]')
+    this.pill = query('[data-el="pill"]')
+    this.grip = query('[data-el="grip"]')
+    this.pauseButton = query('[data-el="pause"]')
+    this.modeSwitch = query('[data-el="mode-switch"]')
+    this.voiceButton = query('[data-el="voice"]')
+    this.textButton = query('[data-el="text"]')
+    this.modeLabel = query('[data-el="mode-label"]')
+    this.pauseState = query('[data-el="pause-state"]')
+    this.timeElement = query('[data-el="time"]')
+    this.reviewCount = query('[data-el="review-count"]')
+    this.tip = query('[data-el="tip"]')
+    this.notice = query('[data-el="notice"]')
+    this.composer = query('[data-el="composer"]')
+    this.composerText = query('[data-el="composer-text"]')
+    this.composerPreview = query('[data-el="composer-preview"]')
+    this.composerResize = new ResizeObserver(() => this.clampComposer())
+    this.composerResize.observe(this.composer)
+    this.composerStatus = query('[data-el="composer-status"]')
+    this.composerAdd = query('[data-el="composer-add"]')
+    this.sheet = query('[data-el="sheet"]')
+    this.list = query('[data-el="list"]')
+    this.copyButton = query('[data-el="copy"]')
+    this.fallback = query('[data-el="fallback"]')
+    this.toast = query('[data-el="toast"]')
+    this.toastText = query('[data-el="toast-text"]')
+    this.toastAction = query('[data-el="toast-action"]')
+    this.pinPreview = query('[data-el="pin-preview"]')
+    this.confirm = query('[data-el="confirm"]')
+    this.confirmTitle = query('[data-el="confirm-title"]')
+    this.confirmMessage = query('[data-el="confirm-message"]')
+    this.confirmOkay = query('[data-el="confirm-ok"]')
 
-    this.bubble.addEventListener('click', () => this.h.onStart())
-    this.pauseBtn.addEventListener('click', () => this.h.onTogglePause())
-    // Sliding switch: clicking the inactive side flips the mode.
-    this.mvoice.addEventListener('click', () => {
-      if (this.textActive) this.h.onToggleMode()
+    this.bubble.addEventListener('click', () => this.handlers.onStart())
+    this.pauseButton.addEventListener('click', () => this.handlers.onTogglePause())
+    this.voiceButton.addEventListener('click', () => this.textMode && this.handlers.onToggleMode())
+    this.textButton.addEventListener('click', () => !this.textMode && this.handlers.onToggleMode())
+    this.grip.addEventListener('pointerdown', (event) => this.beginHudDrag(event))
+    query('[data-el="review"]').addEventListener('click', () => this.handlers.onReview())
+    query('[data-el="clear"]').addEventListener('click', () => this.showConfirm(
+      'Clear this feedback?',
+      'This removes every note in the current session.',
+      'Clear feedback',
+      () => this.handlers.onClear(),
+    ))
+    query('[data-el="sheet-close"]').addEventListener('click', () => this.handlers.onClose())
+    query('[data-el="resume-session"]').addEventListener('click', () => this.handlers.onResumeSession())
+    query('[data-el="discard"]').addEventListener('click', () => this.showConfirm(
+      'Discard this feedback?',
+      'This session will be removed so you can start fresh.',
+      'Discard',
+      () => this.handlers.onDiscard(),
+    ))
+    this.copyButton.addEventListener('click', () => this.handlers.onCopy())
+    query('[data-el="composer-cancel"]').addEventListener('click', () => this.handlers.onComposeCancel())
+    this.composerAdd.addEventListener('click', () => this.handlers.onComposeAdd())
+    this.composerText.addEventListener('input', () => {
+      this.composerAdd.disabled = this.composerText.value.trim() === ''
+      this.handlers.onComposeInput(this.composerText.value)
     })
-    this.mtext.addEventListener('click', () => {
-      if (!this.textActive) this.h.onToggleMode()
-    })
-    this.grip.addEventListener('mousedown', (e) => this.beginDrag(e))
-    // Custom HUD tooltips (native `title` is too slow / feels broken on an overlay).
-    this.pill.querySelectorAll<HTMLElement>('[data-tip]').forEach((el) => {
-      el.addEventListener('mouseenter', () => this.showTip(el))
-      el.addEventListener('mouseleave', () => this.hideTip())
-    })
-    q<HTMLElement>('[data-el="end"]').addEventListener('click', () => this.h.onStop())
-    q<HTMLElement>('[data-el="clear"]').addEventListener('click', () =>
-      this.showConfirm(
-        'Clear this transcript?',
-        "This deletes everything you've captured in this session and can't be undone.",
-        'Clear transcript',
-        () => this.h.onClear(),
-      ),
-    )
-    q<HTMLElement>('[data-el="confirm-cancel"]').addEventListener('click', () => this.hideConfirm())
-    q<HTMLElement>('[data-el="confirm-back"]').addEventListener('click', () => this.hideConfirm())
-    q<HTMLElement>('[data-el="confirm-ok"]').addEventListener('click', () => {
-      const act = this.confirmAction
-      this.hideConfirm()
-      act?.()
-    })
-    q('[data-el="sclose"]').addEventListener('click', () => this.h.onClose())
-    this.copyBtn.addEventListener('click', () => this.h.onCopy())
-    this.resumeBtn.addEventListener('click', () => this.h.onResume())
-    // "Discard & start over" is destructive (wipes the session) — confirm first.
-    this.discardBtn.addEventListener('click', () =>
-      this.showConfirm(
-        'Discard this session?',
-        "This permanently deletes everything you've captured. You can't undo this.",
-        'Discard & start over',
-        () => this.h.onDiscard(),
-      ),
-    )
-
-    // Text-mode composer wiring.
-    this.caddBtn.addEventListener('click', () => this.h.onComposeAdd(this.ctext.value))
-    q('[data-el="ccancel"]').addEventListener('click', () => this.h.onComposeCancel())
-    this.ctext.addEventListener('input', () => {
-      this.caddBtn.disabled = this.ctext.value.trim() === ''
-    })
-    this.ctext.addEventListener('keydown', (e) => {
-      // Enter commits; Shift+Enter inserts a newline. Esc is handled by the session.
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        if (this.ctext.value.trim()) this.h.onComposeAdd(this.ctext.value)
+    this.composerText.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        this.handlers.onComposeCancel()
+      } else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!this.composerAdd.disabled) this.handlers.onComposeAdd()
       }
     })
-
-    // Drag-to-reorder within the review list.
-    this.slist.addEventListener('dragover', (e) => {
-      if (!this.dragEl) return
-      e.preventDefault()
-      const after = afterElement(this.slist, e.clientY)
-      if (after == null) this.slist.appendChild(this.dragEl)
-      else this.slist.insertBefore(this.dragEl, after)
+    query('[data-el="confirm-cancel"]').addEventListener('click', () => this.hideConfirm())
+    query('[data-el="confirm-back"]').addEventListener('click', () => this.hideConfirm())
+    this.confirmOkay.addEventListener('click', () => {
+      const action = this.confirmAction
+      this.hideConfirm()
+      action?.()
     })
-    this.slist.addEventListener('drop', (e) => {
-      if (!this.dragEl) return
-      e.preventDefault()
-      const ids = Array.from(this.slist.querySelectorAll<HTMLElement>('.fb-card')).map((c) =>
-        Number(c.dataset.eid),
-      )
-      this.h.onReorder(ids)
+    this.pill.querySelectorAll<HTMLElement>('[data-tip]').forEach((element) => {
+      element.addEventListener('mouseenter', () => this.showTip(element))
+      element.addEventListener('mouseleave', () => this.hideTip())
+    })
+
+    this.capture.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !event.isPrimary) return
+      this.capture.setPointerCapture(event.pointerId)
+      this.handlers.onGestureStart({ x: event.clientX, y: event.clientY }, event.pointerId)
+      event.preventDefault()
+    })
+    this.capture.addEventListener('pointermove', (event) => this.handlers.onGestureMove({ x: event.clientX, y: event.clientY }, event.pointerId))
+    this.capture.addEventListener('pointerup', (event) => this.handlers.onGestureEnd({ x: event.clientX, y: event.clientY }, event.pointerId))
+    this.capture.addEventListener('pointercancel', (event) => this.handlers.onGestureCancel(event.pointerId))
+
+    this.list.addEventListener('dragover', (event) => {
+      event.preventDefault()
+      if (!this.dragCard) return
+      const before = insertBeforeForY(this.list, event.clientY)
+      if (before) this.list.insertBefore(this.dragCard, before)
+      else this.list.appendChild(this.dragCard)
+    })
+    this.list.addEventListener('drop', () => {
+      if (!this.dragCard) return
+      const ids = Array.from(this.list.querySelectorAll<HTMLElement>('.fb-card')).map((card) => Number(card.dataset.id))
+      this.handlers.onReorder(ids)
+      this.dragOrder = []
     })
 
     this.setPhase('idle')
   }
 
   private template(position: 'bottom-right' | 'bottom-left'): string {
-    const pos = position === 'bottom-left' ? 'pos-bl' : 'pos-br'
+    const corner = position === 'bottom-left' ? 'pos-bl' : 'pos-br'
     return `
-      <div class="fb-overlay"><div class="fb-spotlight" data-el="spotlight"></div><div class="fb-highlight" data-el="highlight"></div><div data-el="pins"></div></div>
-      <div class="fb-widget ${pos}" data-el="widget">
-        <div class="fb-bubble" data-el="bubble" title="Start feedback session">${MIC_SVG}</div>
+      <div class="fb-capture off" data-el="capture"></div>
+      <div class="fb-overlay"><div class="fb-spotlight" data-el="spotlight"></div><div class="fb-selection" data-el="selection"></div><div class="fb-highlight" data-el="highlight"></div><div data-el="pins"></div></div>
+      <div class="fb-widget ${corner}" data-el="widget"><button class="fb-bubble" data-el="bubble" title="Start Karen" aria-label="Start Karen">${KAREN_MARK}</button></div>
+      <div class="fb-pill" data-el="pill">
+        <button class="fb-hgrip" data-el="grip" data-tip="Move Karen" aria-label="Move Karen">${GRIP_SVG}</button>
+        <span class="fb-mswitch" data-el="mode-switch"><span class="fb-mknob"></span><button class="fb-mopt fb-mopt-v" data-el="voice" data-tip="Voice notes" aria-label="Voice notes">${MIC_SVG}</button><button class="fb-mopt fb-mopt-t" data-el="text" data-tip="Text notes" aria-label="Text notes">${PENCIL_SVG}</button></span>
+        <span class="fb-vsep"></span><span class="fb-dot"></span><span class="fb-mode-label" data-el="mode-label">voice</span><span class="fb-time" data-el="time">0:00</span><span class="fb-pstate" data-el="pause-state"></span>
+        <span class="fb-vsep"></span><button class="fb-pctl" data-el="pause" data-tip="Pause" aria-label="Pause">${PAUSE_SVG}</button><button class="fb-pctl fb-clear" data-el="clear" data-tip="Clear" aria-label="Clear">${TRASH_SVG}</button><button class="fb-pctl fb-end" data-el="review" data-tip="Review feedback"><span>Review</span><span class="fb-review-count" data-el="review-count"></span></button>
       </div>
-      <div class="fb-pill" data-el="pill"><button class="fb-hgrip" data-el="grip" aria-label="Drag to move">${GRIP_SVG}</button><span class="fb-mswitch" data-el="mswitch"><span class="fb-mknob"></span><button class="fb-mopt fb-mopt-v" data-el="mvoice" data-tip="Voice mode">${MIC_SVG}</button><button class="fb-mopt fb-mopt-t" data-el="mtext" data-tip="Text mode">${PENCIL_SVG}</button></span><span class="fb-vsep"></span><span class="fb-dot" data-el="dot" data-tip="Recording"></span><span class="fb-time" data-el="time" data-tip="Elapsed time">0:00</span><span class="fb-modelbl" data-el="modelbl"></span><span class="fb-pstate" data-el="pstate"></span><span class="fb-vsep"></span><button class="fb-pctl" data-el="pause" data-tip="Pause">${PAUSE_SVG}</button><span class="fb-vsep"></span><button class="fb-pctl fb-clear" data-el="clear" data-tip="Clear">${TRASH_SVG}</button><span class="fb-vsep"></span><button class="fb-pctl fb-end" data-el="end" data-tip="You can resume after"><span>Review</span> &#9656;</button></div>
       <div class="fb-tip" data-el="tip"></div>
-      <div class="fb-confirm" data-el="confirm">
-        <div class="fb-confirm-back" data-el="confirm-back"></div>
-        <div class="fb-confirm-box">
-          <div class="fb-confirm-title" data-el="confirm-title">Clear this transcript?</div>
-          <div class="fb-confirm-msg" data-el="confirm-msg"></div>
-          <div class="fb-confirm-row">
-            <button class="fb-confirm-cancel" data-el="confirm-cancel">Cancel</button>
-            <button class="fb-confirm-ok" data-el="confirm-ok">Clear transcript</button>
-          </div>
-        </div>
-      </div>
-      <div class="fb-composer" data-el="composer">
-        <div class="fb-chead"><span class="fb-cbadge" data-el="cbadge">${PENCIL_SVG}</span><span class="fb-csrc" data-el="csrc"></span></div>
-        <textarea class="fb-ctext" data-el="ctext" placeholder="Add a note about this element…" spellcheck="false"></textarea>
-        <div class="fb-cfoot"><button class="fb-ccancel" data-el="ccancel" title="Cancel (Esc)">Cancel</button><button class="fb-cadd" data-el="cadd" title="Add note (Enter)" disabled>Add &#9656;</button></div>
-      </div>
-      <div class="fb-caption" data-el="caption"><span class="lbl">listening</span><span data-el="captext"></span></div>
       <div class="fb-notice" data-el="notice"></div>
-      <div class="fb-sheet" data-el="sheet">
-        <div class="fb-shead"><h2>Review your feedback</h2><button class="fb-sclose" data-el="sclose" title="Close (keeps this session, mic reopens it)">&#10005;</button></div>
-        <div class="fb-slist" data-el="slist"></div>
-        <div class="fb-sfoot">
-          <button class="fb-copy" data-el="copy">Copy feedback</button>
-          <textarea class="fb-fallback" data-el="fallback" readonly></textarea>
-          <div class="fb-sfoot-row">
-            <button class="fb-resume" data-el="resume">&#8635; Resume recording</button>
-            <button class="fb-discard" data-el="discard" title="Deletes this session and starts fresh">Discard &amp; start over</button>
-          </div>
-        </div>
+      <div class="fb-composer" data-el="composer">
+        <img class="fb-region-img" data-el="composer-preview" alt="Original captured region" hidden />
+        <textarea class="fb-ctext" data-el="composer-text" aria-label="Annotation" placeholder="What needs saying?" spellcheck="true"></textarea>
+        <div class="fb-cstatus" data-el="composer-status"></div>
+        <div class="fb-cfoot"><span class="fb-key-hint">Enter to save · Shift+Enter for newline</span><button class="fb-ccancel" data-el="composer-cancel">Cancel</button><button class="fb-cadd" data-el="composer-add" disabled>Add</button></div>
       </div>
-      <div class="fb-toast" data-el="toast"><span class="ok">&#10003;</span> <span data-el="toasttext"></span></div>
+      <div class="fb-confirm" data-el="confirm"><div class="fb-confirm-back" data-el="confirm-back"></div><div class="fb-confirm-box"><div class="fb-confirm-title" data-el="confirm-title"></div><div class="fb-confirm-msg" data-el="confirm-message"></div><div class="fb-confirm-row"><button class="fb-confirm-cancel" data-el="confirm-cancel">Cancel</button><button class="fb-confirm-ok" data-el="confirm-ok"></button></div></div></div>
+      <aside class="fb-sheet" data-el="sheet" aria-hidden="true" inert><header class="fb-shead"><h2>Review with Karen</h2><button class="fb-sclose" data-el="sheet-close" aria-label="Close">×</button></header><div class="fb-slist" data-el="list"></div><footer class="fb-sfoot"><button class="fb-copy" data-el="copy">Copy feedback</button><textarea class="fb-fallback" data-el="fallback" readonly></textarea><div class="fb-sfoot-row"><button class="fb-resume" data-el="resume-session">Resume</button><button class="fb-discard" data-el="discard">Discard &amp; start over</button></div></footer></aside>
+      <div class="fb-toast" data-el="toast"><span data-el="toast-text" role="status" aria-live="polite"></span><button data-el="toast-action" hidden></button></div>
+      <div class="fb-pin-preview" data-el="pin-preview" role="tooltip"></div>
     `
   }
 
-  contains(el: Element): boolean {
-    return el === this.host || this.host.contains(el)
+  contains(element: Element): boolean {
+    return element === this.host || element.getRootNode() === this.root
   }
 
-  setPhase(p: Phase): void {
-    this.bubble.classList.remove('starting')
-    this.bubble.style.display = p === 'idle' || p === 'starting' ? 'flex' : 'none'
-    this.bubble.innerHTML = p === 'starting' ? '<div class="fb-spinner"></div>' : MIC_SVG
-    if (p === 'starting') this.bubble.classList.add('starting')
-    this.pill.style.display = p === 'recording' ? 'flex' : 'none'
-    if (p === 'recording') this.placeHud()
-    this.caption.style.display = 'none'
-    this.notice.style.display = 'none'
-    this.hideConfirm() // any phase change dismisses a pending confirm
+  setPhase(phase: Phase, starting = false): void {
+    this.hidePinPreview()
+    this.spotlight(null)
+    this.bubble.style.display = phase === 'idle' ? 'flex' : 'none'
+    this.bubble.classList.toggle('starting', starting)
+    this.bubble.innerHTML = starting ? '<span class="fb-spinner"></span>' : KAREN_MARK
+    this.pill.style.display = phase === 'active' ? 'flex' : 'none'
+    if (phase === 'active') this.placeHud()
+    this.sheet.classList.toggle('open', phase === 'review')
+    this.sheet.toggleAttribute('inert', phase !== 'review')
+    this.sheet.setAttribute('aria-hidden', phase === 'review' ? 'false' : 'true')
+    if (phase !== 'active') {
+      this.setCaptureEnabled(false)
+      this.closeComposer()
+      this.hideNotice()
+    }
+    this.hideConfirm()
     this.hideTip()
-    if (p !== 'recording') this.closeComposer()
-    if (p !== 'review') this.sheet.classList.remove('open')
-    if (p === 'idle') this.captext.textContent = ''
+    this.positionToast()
   }
 
-  /** Open a confirmation modal for a destructive action (Clear or Discard). */
-  showConfirm(title: string, message: string, okLabel: string, onConfirm: () => void): void {
-    this.confirmTitle.textContent = title
-    this.confirmMsg.textContent = message
-    this.confirmOk.textContent = okLabel
-    this.confirmAction = onConfirm
-    this.confirm.classList.add('open')
+  setCaptureEnabled(enabled: boolean): void {
+    this.capture.classList.toggle('off', !enabled)
   }
 
-  hideConfirm(): void {
-    this.confirmAction = null
-    this.confirm.classList.remove('open')
+  elementsAt(x: number, y: number): Element[] {
+    const wasOff = this.capture.classList.contains('off')
+    this.capture.classList.add('off')
+    const elements = document.elementsFromPoint(x, y).filter((element) => !this.contains(element))
+    if (!wasOff) this.capture.classList.remove('off')
+    return elements
+  }
+
+  highlight(rect: ViewportRect | null): void { place(this.highlightEl, rect) }
+  spotlight(rect: ViewportRect | null): void { place(this.spotlightEl, rect) }
+
+  setGestureRect(rect: ViewportRect | null): void {
+    if (!rect) {
+      this.selectionAnimation?.cancel()
+      this.selectionAnimation = null
+    }
+    place(this.selectionEl, rect)
+    this.selectionEl.classList.toggle('dragging', !!rect)
+  }
+
+  async morphSelection(from: ViewportRect, to: ViewportRect): Promise<void> {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.setGestureRect(null)
+      this.highlight(to)
+      return
+    }
+    place(this.selectionEl, from)
+    this.selectionEl.classList.add('dragging')
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const sx = from.width ? to.width / from.width : 1
+    const sy = from.height ? to.height / from.height : 1
+    const animation = this.selectionEl.animate(
+      [{ transform: 'none' }, { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})` }],
+      { duration: 180, easing: 'cubic-bezier(.23,1,.32,1)' },
+    )
+    this.selectionAnimation = animation
+    try { await animation.finished } catch { /* interrupted */ }
+    if (this.selectionAnimation !== animation) return
+    this.setGestureRect(null)
+    this.selectionEl.style.transform = ''
+    this.highlight(to)
   }
 
   setMode(mode: CaptureMode): void {
-    this.caption.style.display = mode === 'voice' ? 'block' : 'none'
-    this.notice.style.display = mode === 'clickonly' || mode === 'text' ? 'block' : 'none'
-    this.pill.classList.toggle('text', mode === 'text')
-    this.pill.classList.toggle('clickonly', mode === 'clickonly')
-    // Persistent HUD chip so the active capture mode is always legible — including
-    // the click-only degradation (mic unavailable), which a fading notice hides.
-    this.modelbl.textContent = mode === 'text' ? 'text' : mode === 'clickonly' ? 'clicks only' : ''
-    if (mode === 'text') this.notice.textContent = 'Click any element to annotate it'
-    this.dot.dataset.tip =
-      mode === 'text' ? 'Text mode' : mode === 'clickonly' ? 'Clicks only' : 'Recording'
-    // Slide the switch knob + highlight the active side (text vs voice/click-only).
-    this.textActive = mode === 'text'
-    this.mswitch.classList.toggle('text', mode === 'text')
+    this.textMode = mode === 'text'
+    this.modeSwitch.classList.toggle('text', this.textMode)
+    this.pill.classList.toggle('text', this.textMode)
+    this.modeLabel.textContent = mode
+    this.timeElement.hidden = this.textMode
   }
 
-  setPaused(on: boolean): void {
-    this.pill.classList.toggle('paused', on)
-    this.pauseBtn.innerHTML = on ? PLAY_SVG : PAUSE_SVG
-    this.pauseBtn.dataset.tip = on ? 'Resume' : 'Pause'
-    this.pstate.textContent = on ? 'paused' : ''
-    if (on) this.dot.dataset.tip = 'Paused'
-    if (on) this.caption.style.display = 'none'
+  setListening(listening: boolean): void { this.pill.classList.toggle('listening', listening) }
+
+  setPaused(paused: boolean): void {
+    this.pill.classList.toggle('paused', paused)
+    this.pauseButton.innerHTML = paused ? PLAY_SVG : PAUSE_SVG
+    this.pauseButton.dataset.tip = paused ? 'Resume' : 'Pause'
+    this.pauseButton.ariaLabel = paused ? 'Resume' : 'Pause'
+    this.pauseState.textContent = paused ? 'paused' : ''
   }
 
-  setTimer(sec: number): void {
-    this.timeEl.textContent = fmtTime(sec)
+  setTimer(seconds: number): void { this.timeElement.textContent = fmtTime(seconds) }
+
+  setReviewCount(count: number): void {
+    this.reviewCount.textContent = String(count)
+    this.reviewCount.classList.toggle('show', count > 0)
+    if (count > 0) {
+      this.reviewCount.style.animation = 'none'
+      void this.reviewCount.offsetWidth
+      this.reviewCount.style.animation = ''
+    }
+    this.bubble.dataset.count = String(count)
   }
 
-  setCaption(text: string): void {
-    this.captext.textContent = text
-  }
-
-  setNotice(text: string): void {
-    this.notice.textContent = text
+  showNotice(message: string): void {
+    this.notice.textContent = message
     this.notice.style.display = 'block'
   }
+  hideNotice(): void { this.notice.style.display = 'none' }
 
-  addPin(id: number, label: number, rect: Rect): void {
-    const p = document.createElement('div')
-    p.className = 'fb-pin'
-    p.textContent = String(label)
-    p.style.left = `${rect.x}px`
-    p.style.top = `${rect.y}px`
-    this.pinsEl.appendChild(p)
-    this.pins.set(id, p)
-  }
-
-  updatePin(id: number, rect: Rect | null): void {
-    const p = this.pins.get(id)
-    if (!p) return
-    if (!rect) {
-      p.style.display = 'none'
-      return
-    }
-    p.style.display = ''
-    p.style.left = `${rect.x}px`
-    p.style.top = `${rect.y}px`
-  }
-
-  removePin(id: number): void {
-    const p = this.pins.get(id)
-    if (p) {
-      p.remove()
-      this.pins.delete(id)
-    }
-  }
-
-  clearPins(): void {
-    this.pins.forEach((p) => p.remove())
-    this.pins.clear()
-  }
-
-  /** Hide/show the on-page pins without discarding them (used when the review
-   *  is closed to the idle bubble but the session is kept). */
-  setPinsVisible(on: boolean): void {
-    this.pinsEl.style.display = on ? '' : 'none'
-  }
-
-  /** Mark the idle mic as reopening a kept-but-closed review. */
-  setBubbleReopen(on: boolean): void {
-    this.bubble.classList.toggle('has-review', on)
-    this.bubble.title = on ? 'Reopen your feedback' : 'Start feedback session'
-  }
-
-  /** Show a custom tooltip above (or below, if clipped) a HUD control. */
-  private showTip(el: HTMLElement): void {
-    const text = el.dataset.tip
-    if (!text) return
-    this.tip.textContent = text
-    const r = el.getBoundingClientRect()
-    const tw = this.tip.offsetWidth
-    const th = this.tip.offsetHeight
-    const left = Math.max(6, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6))
-    let top = r.top - th - 8
-    if (top < 6) top = r.bottom + 8 // flip below when near the top edge
-    this.tip.style.left = `${left}px`
-    this.tip.style.top = `${top}px`
-    this.tip.classList.add('show')
-  }
-
-  private hideTip(): void {
-    this.tip.classList.remove('show')
-  }
-
-  // ---- Draggable HUD: remembered position (localStorage) or default corner ----
-
-  /** Position the HUD at its remembered spot, or the default corner. */
-  private placeHud(): void {
-    const p = this.loadPos()
-    if (p) {
-      this.pill.style.left = `${p.x}px`
-      this.pill.style.top = `${p.y}px`
-      this.pill.style.right = 'auto'
-      this.pill.style.bottom = 'auto'
-      this.clampHud()
-    } else {
-      const br = this.position !== 'bottom-left'
-      this.pill.style.left = br ? 'auto' : '22px'
-      this.pill.style.right = br ? '22px' : 'auto'
-      this.pill.style.top = 'auto'
-      this.pill.style.bottom = '22px'
-    }
-  }
-
-  /** Keep a left/top-positioned HUD inside the viewport. */
-  private clampHud(): void {
-    const x = parseFloat(this.pill.style.left)
-    const y = parseFloat(this.pill.style.top)
-    if (Number.isNaN(x) || Number.isNaN(y)) return
-    const w = this.pill.offsetWidth
-    const h = this.pill.offsetHeight
-    this.pill.style.left = `${Math.max(6, Math.min(x, window.innerWidth - w - 6))}px`
-    this.pill.style.top = `${Math.max(6, Math.min(y, window.innerHeight - h - 6))}px`
-  }
-
-  private beginDrag(e: MouseEvent): void {
-    const r = this.pill.getBoundingClientRect()
-    this.dragOff = { dx: e.clientX - r.left, dy: e.clientY - r.top }
-    this.pill.style.left = `${r.left}px`
-    this.pill.style.top = `${r.top}px`
-    this.pill.style.right = 'auto'
-    this.pill.style.bottom = 'auto'
-    this.pill.classList.add('dragging')
-    this.hideTip()
-    this.h.onHudDrag(true)
-    window.addEventListener('mousemove', this.onDragMove, true)
-    window.addEventListener('mouseup', this.onDragUp, true)
-    e.preventDefault()
-  }
-
-  private onDragMove = (e: MouseEvent): void => {
-    if (!this.dragOff) return
-    const w = this.pill.offsetWidth
-    const h = this.pill.offsetHeight
-    const x = Math.max(6, Math.min(e.clientX - this.dragOff.dx, window.innerWidth - w - 6))
-    const y = Math.max(6, Math.min(e.clientY - this.dragOff.dy, window.innerHeight - h - 6))
-    this.pill.style.left = `${x}px`
-    this.pill.style.top = `${y}px`
-    e.preventDefault()
-  }
-
-  private onDragUp = (): void => {
-    if (!this.dragOff) return
-    this.dragOff = null
-    this.pill.classList.remove('dragging')
-    window.removeEventListener('mousemove', this.onDragMove, true)
-    window.removeEventListener('mouseup', this.onDragUp, true)
-    this.savePos()
-    this.h.onHudDrag(false)
-  }
-
-  private loadPos(): { x: number; y: number } | null {
-    try {
-      const raw = localStorage.getItem(HUD_POS_KEY)
-      if (!raw) return null
-      const p = JSON.parse(raw) as { x?: unknown; y?: unknown }
-      if (typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y }
-    } catch {
-      /* storage unavailable / malformed */
-    }
-    return null
-  }
-
-  private savePos(): void {
-    const x = parseFloat(this.pill.style.left)
-    const y = parseFloat(this.pill.style.top)
-    if (Number.isNaN(x) || Number.isNaN(y)) return
-    try {
-      localStorage.setItem(HUD_POS_KEY, JSON.stringify({ x, y }))
-    } catch {
-      /* storage unavailable */
-    }
-  }
-
-  highlight(rect: Rect | null): void {
-    place(this.highlightEl, rect)
-  }
-
-  /** Dramatic focus: dims the rest of the page, leaving the target bright + ringed. */
-  spotlight(rect: Rect | null): void {
-    place(this.spotlightEl, rect)
-  }
-
-  /** Read the composer's current text (used to cache a draft on dismissal). */
-  getComposerDraft(): string {
-    return this.ctext.value
-  }
-
-  /** Open the note composer anchored beside the given element rect (text mode).
-   *  `initial` pre-fills a cached draft when re-opening the same element. */
-  openComposer(rect: Rect, header: string, initial = ''): void {
-    this.csrc.textContent = header
-    this.ctext.value = initial
-    this.caddBtn.disabled = initial.trim() === ''
-    this.composer.style.display = 'block'
-    // Measure, then place: right of the element, flipping to left/below if clipped.
-    const w = this.composer.offsetWidth
-    const h = this.composer.offsetHeight
+  openComposer(rect: ViewportRect, mode: CaptureMode, initial = '', editing = false): void {
+    this.hideToast()
+    this.composerText.value = initial
+    this.composerAdd.textContent = editing ? 'Save' : 'Add'
+    this.composerAdd.disabled = initial.trim() === ''
+    this.composer.classList.add('open')
+    this.setComposerState(mode === 'voice' ? 'preparing' : 'text')
+    const width = this.composer.offsetWidth
+    const height = this.composer.offsetHeight
     const gap = 10
     let left = rect.x + rect.width + gap
-    if (left + w > window.innerWidth - 8) left = rect.x - w - gap
-    if (left < 8) left = Math.min(rect.x, window.innerWidth - w - 8)
-    let top = rect.y
-    if (top + h > window.innerHeight - 8) top = window.innerHeight - h - 8
+    if (left + width > window.innerWidth - 8) left = rect.x - width - gap
+    if (left < 8) left = Math.min(rect.x, window.innerWidth - width - 8)
+    let top = Math.max(8, rect.y)
+    if (top + height > window.innerHeight - 8) top = window.innerHeight - height - 8
     this.composer.style.left = `${Math.max(8, left)}px`
     this.composer.style.top = `${Math.max(8, top)}px`
-    // Restart the grow-in animation on each open (it otherwise only runs on mount).
-    this.composer.style.animation = 'none'
-    void this.composer.offsetWidth
-    this.composer.style.animation = ''
-    this.ctext.focus()
+    this.composerText.focus()
   }
 
-  /** Update the composer's source label once the element context resolves. */
-  setComposerHeader(header: string): void {
-    if (this.composer.style.display !== 'none') this.csrc.textContent = header
+  setComposerState(state: ComposerState, message?: string): void {
+    this.composerStatus.innerHTML = ''
+    this.composerAdd.disabled = state === 'finalizing' || this.composerText.value.trim() === ''
+    if (state === 'text') return
+    if (state === 'listening') {
+      this.composerStatus.innerHTML = '<span class="fb-listen-dot"></span><span>Listening — edit as you go</span>'
+      return
+    }
+    if (state === 'preparing') this.composerStatus.textContent = message ?? 'Getting the microphone ready…'
+    if (state === 'finalizing') this.composerStatus.textContent = 'Finishing your note…'
+    if (state === 'unavailable') this.composerStatus.textContent = message ?? 'Voice is unavailable. You can still type.'
+    if (state === 'voice-paused') {
+      const label = document.createElement('span')
+      label.textContent = message ?? 'Stopped after 60 seconds without speech.'
+      const resume = document.createElement('button')
+      resume.className = 'fb-cresume'
+      resume.textContent = 'Resume'
+      resume.addEventListener('click', () => this.handlers.onComposeResumeVoice())
+      this.composerStatus.append(label, resume)
+    }
+  }
+
+  setComposerText(text: string): void {
+    const active = this.root.activeElement === this.composerText
+    const start = this.composerText.selectionStart
+    const end = this.composerText.selectionEnd
+    this.composerText.value = text
+    this.composerAdd.disabled = text.trim() === ''
+    if (active) {
+      const nextStart = Math.min(start, text.length)
+      const nextEnd = Math.min(end, text.length)
+      this.composerText.setSelectionRange(nextStart, nextEnd)
+    }
+  }
+
+  getComposerText(): string { return this.composerText.value }
+
+  setComposerPreview(blob: Blob | null): void {
+    if (this.composerPreviewUrl) URL.revokeObjectURL(this.composerPreviewUrl)
+    this.composerPreviewUrl = blob ? URL.createObjectURL(blob) : null
+    this.composerPreview.hidden = !blob
+    if (this.composerPreviewUrl) this.composerPreview.src = this.composerPreviewUrl
+    else this.composerPreview.removeAttribute('src')
+  }
+
+  private clampComposer(): void {
+    if (!this.composer.classList.contains('open')) return
+    const rect = this.composer.getBoundingClientRect()
+    this.composer.style.top = `${Math.max(8, Math.min(rect.top, innerHeight - rect.height - 8))}px`
+    this.composer.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - rect.width - 8))}px`
   }
 
   closeComposer(): void {
-    this.composer.style.display = 'none'
-    this.ctext.value = ''
+    this.setComposerPreview(null)
+    this.composer.classList.remove('open')
+    this.composerText.value = ''
+    this.composerStatus.innerHTML = ''
   }
 
-  /**
-   * Let the panel yield to the app: while the review panel is open, fade it out
-   * and make it click-through whenever the cursor is over the app (left of the
-   * panel), snapping it back when the cursor returns to the right edge. Works on
-   * any host layout — unlike a reflow "push", which full-viewport app shells
-   * (fixed / 100vw) ignore.
-   */
-  enableYield(on: boolean): void {
-    if (!this.dock) return
-    if (on) {
-      window.addEventListener('mousemove', this.onYieldMove, true)
+  addPin(id: number, label: number, rect: ViewportRect): void {
+    const pin = document.createElement('button')
+    pin.className = 'fb-pin'
+    pin.type = 'button'
+    pin.ariaLabel = `Edit annotation ${label}`
+    pin.textContent = String(label)
+    pin.addEventListener('mouseenter', () => this.handlers.onPinHover(id, true))
+    pin.addEventListener('mouseleave', () => this.handlers.onPinHover(id, false))
+    pin.addEventListener('focus', () => this.handlers.onPinHover(id, true))
+    pin.addEventListener('blur', () => this.handlers.onPinHover(id, false))
+    pin.addEventListener('click', () => this.handlers.onPinEdit(id))
+    this.pinsEl.appendChild(pin)
+    this.pins.set(id, pin)
+    this.updatePin(id, rect)
+  }
+
+  updatePin(id: number, rect: ViewportRect | null): void {
+    const pin = this.pins.get(id)
+    if (!pin || !rect) {
+      if (pin) pin.style.display = 'none'
+      return
+    }
+    pin.style.display = 'flex'
+    pin.style.left = `${rect.x}px`
+    pin.style.top = `${rect.y}px`
+  }
+
+  setPinLabel(id: number, label: number): void {
+    const pin = this.pins.get(id)
+    if (pin) pin.textContent = String(label)
+    if (pin) pin.ariaLabel = `Edit annotation ${label}`
+    const badge = this.list.querySelector(`[data-id="${id}"] .fb-badge`)
+    if (badge) badge.textContent = String(label)
+  }
+
+  showPinPreview(note: string, rect: ViewportRect): void {
+    this.pinPreview.textContent = note
+    this.pinPreview.classList.add('show')
+    const width = this.pinPreview.offsetWidth
+    const height = this.pinPreview.offsetHeight
+    this.pinPreview.style.left = `${Math.max(8, Math.min(rect.x + 18, innerWidth - width - 8))}px`
+    this.pinPreview.style.top = `${Math.max(8, Math.min(rect.y + 18, innerHeight - height - 8))}px`
+  }
+
+  hidePinPreview(): void { this.pinPreview.classList.remove('show') }
+
+  removePin(id: number): void { this.pins.get(id)?.remove(); this.pins.delete(id) }
+  clearPins(): void { this.pins.forEach((pin) => pin.remove()); this.pins.clear() }
+  setPinsVisible(visible: boolean): void { this.pinsEl.style.display = visible ? '' : 'none' }
+
+  setBubbleReview(count: number): void {
+    this.bubble.classList.toggle('has-review', count > 0)
+    this.bubble.dataset.count = String(count)
+    this.bubble.title = count > 0 ? `Reopen ${count} feedback item${count === 1 ? '' : 's'}` : 'Start Karen'
+  }
+
+  renderReview(result: SessionResult, previews: Map<number, string>): void {
+    this.copyButton.classList.remove('done')
+    this.copyButton.textContent = 'Copy feedback'
+    this.fallback.style.display = 'none'
+    const scroll = this.list.scrollTop
+    this.list.innerHTML = ''
+    if (!result.annotations.length) {
+      const empty = document.createElement('div')
+      empty.className = 'fb-empty'
+      empty.textContent = 'Nothing here yet. Resume, pick something, and tell Karen what needs attention.'
+      this.list.appendChild(empty)
+      return
+    }
+    for (const annotation of result.annotations) this.list.appendChild(this.annotationCard(annotation, previews.get(annotation.id)))
+    this.list.scrollTop = scroll
+  }
+
+  focusReviewNote(id: number): void {
+    const note = this.list.querySelector<HTMLElement>(`[data-id="${id}"] .fb-say`)
+    note?.scrollIntoView({ block: 'nearest' })
+    note?.focus()
+  }
+
+  private annotationCard(annotation: Annotation, preview?: string): HTMLElement {
+    const card = document.createElement('article')
+    card.className = `fb-card ${annotation.target.kind === 'region' ? 'fb-card-region' : 'fb-card-element'}`
+    card.dataset.id = String(annotation.id)
+    const top = document.createElement('div')
+    top.className = 'fb-card-top'
+    const target = annotation.target
+    const title = target.kind === 'element' ? target.element.component ?? `<${target.element.tag}>` : 'Region'
+    top.innerHTML = `<span class="fb-badge">${annotation.n}</span><span class="fb-input">${annotation.input}</span><span class="fb-comp">${esc(title)}</span>`
+    card.appendChild(top)
+    if (target.kind === 'element') {
+      const ref = document.createElement('div')
+      ref.className = 'fb-src'
+      ref.textContent = target.element.source ? srcStr(target.element.source) : target.element.selector ?? target.element.outerHTMLSnippet
+      card.appendChild(ref)
     } else {
+      card.appendChild(this.regionDetails(target, preview))
+    }
+    const note = document.createElement('div')
+    note.className = 'fb-say'
+    note.contentEditable = 'true'
+    note.setAttribute('role', 'textbox')
+    note.setAttribute('aria-label', `Annotation ${annotation.n}`)
+    note.spellcheck = true
+    note.textContent = annotation.note
+    note.addEventListener('input', () => this.handlers.onEdit(annotation.id, note.textContent ?? ''))
+    card.appendChild(note)
+    this.makeDraggable(card, annotation.id)
+    card.appendChild(mkButton('fb-edit', '✎', 'Reselect target', () => this.handlers.onReselect(annotation.id)))
+    card.appendChild(mkButton('fb-del', '×', 'Delete item', () => this.handlers.onDelete(annotation.id)))
+    card.addEventListener('mouseenter', () => !this.dragCard && this.handlers.onHover(annotation.id, true))
+    card.addEventListener('mouseleave', () => this.handlers.onHover(annotation.id, false))
+    return card
+  }
+
+  private regionDetails(target: RegionTarget, preview?: string): HTMLElement {
+    const wrapper = document.createElement('div')
+    const meta = document.createElement('div')
+    meta.className = 'fb-region-meta'
+    meta.textContent = `${Math.round(target.rect.width)} × ${Math.round(target.rect.height)} px · ${target.elements.length} component${target.elements.length === 1 ? '' : 's'}`
+    wrapper.appendChild(meta)
+    if (preview) {
+      const image = document.createElement('img')
+      image.className = 'fb-region-img'
+      image.src = preview
+      image.alt = 'Captured feedback region'
+      wrapper.appendChild(image)
+    }
+    if (target.elements.length) {
+      const components = document.createElement('details')
+      components.className = 'fb-components'
+      const summary = document.createElement('summary')
+      summary.textContent = Array.from(
+        new Set(target.elements.map((element) => element.component ?? `<${element.tag}>`)),
+      ).join(' · ')
+      components.appendChild(summary)
+      for (const element of target.elements) {
+        const source = document.createElement('div')
+        source.className = 'fb-src'
+        source.textContent = `${element.component ?? element.tag} · ${element.source ? srcStr(element.source) : element.selector ?? element.outerHTMLSnippet}`
+        components.appendChild(source)
+      }
+      wrapper.appendChild(components)
+    }
+    return wrapper
+  }
+
+  private makeDraggable(card: HTMLElement, id: number): void {
+    const grip = document.createElement('div')
+    grip.className = 'fb-grip'
+    grip.title = 'Drag to reorder'
+    grip.textContent = '⠿'
+    grip.addEventListener('pointerdown', () => { card.draggable = true })
+    card.addEventListener('dragstart', (event) => {
+      this.dragOrder = Array.from(this.list.querySelectorAll<HTMLElement>('.fb-card'))
+      this.dragCard = card
+      card.classList.add('dragging')
+      event.dataTransfer?.setData('text/plain', String(id))
+    })
+    card.addEventListener('dragend', () => {
+      for (const item of this.dragOrder) this.list.appendChild(item)
+      this.dragOrder = []
+      this.dragCard = null
+      card.draggable = false
+      card.classList.remove('dragging')
+    })
+    card.appendChild(grip)
+  }
+
+  setReselecting(active: boolean): void {
+    this.sheet.classList.toggle('dim', active)
+    if (active) this.showNotice('Pick or drag the replacement · Esc to cancel')
+    else this.hideNotice()
+  }
+
+  enableYield(enabled: boolean): void {
+    if (!this.dock) return
+    if (enabled) window.addEventListener('mousemove', this.onYieldMove, true)
+    else {
       window.removeEventListener('mousemove', this.onYieldMove, true)
       this.yielded = false
       this.sheet.classList.remove('yield')
     }
   }
 
-  private onYieldMove = (e: MouseEvent): void => {
-    // Fade once the cursor is left of the panel's leading edge (over the app).
-    const left = window.innerWidth - this.sheet.offsetWidth
-    const should = e.clientX < left - 4
-    if (should !== this.yielded) {
-      this.yielded = should
-      this.sheet.classList.toggle('yield', should)
+  private onYieldMove = (event: MouseEvent): void => {
+    const shouldYield = event.clientX < window.innerWidth - this.sheet.offsetWidth - 4
+    if (shouldYield !== this.yielded) {
+      this.yielded = shouldYield
+      this.sheet.classList.toggle('yield', shouldYield)
     }
   }
 
-  renderReview(result: SessionResult): void {
-    this.setPhase('review')
-    this.sheet.classList.add('open')
-
-    this.copyBtn.classList.remove('done')
-    this.copyBtn.textContent = 'Copy feedback'
-    this.fallback.style.display = 'none'
-
-    const scroll = this.slist.scrollTop
-    this.slist.innerHTML = ''
-
-    if (result.events.length === 0) {
-      const e = document.createElement('div')
-      e.className = 'fb-empty'
-      e.textContent =
-        'Nothing was captured. Resume to keep talking, or start a new session.'
-      this.slist.appendChild(e)
-      return
-    }
-
-    for (const ev of result.events) {
-      this.slist.appendChild(ev.kind === 'speech' ? this.speechCard(ev) : this.actionCard(ev))
-    }
-    this.slist.scrollTop = scroll
+  showCopied(): void { this.copyButton.classList.add('done'); this.copyButton.textContent = '✓ Copied' }
+  setCopyBusy(busy: boolean): void {
+    this.copyButton.disabled = busy
+    if (busy) this.copyButton.textContent = 'Saving images…'
+    else if (!this.copyButton.classList.contains('done')) this.copyButton.textContent = 'Copy feedback'
   }
-
-  /** Add a drag handle + drag wiring so a card can be reordered. */
-  private makeDraggable(card: HTMLElement, id: number): void {
-    card.dataset.eid = String(id)
-    const grip = document.createElement('div')
-    grip.className = 'fb-grip'
-    grip.title = 'drag to reorder'
-    grip.innerHTML = '&#10303;'
-    grip.addEventListener('mousedown', () => (card.draggable = true))
-    grip.addEventListener('mouseup', () => (card.draggable = false))
-    card.addEventListener('dragstart', (e) => {
-      this.dragEl = card
-      card.classList.add('dragging')
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move'
-        e.dataTransfer.setData('text/plain', String(id))
-      }
-    })
-    card.addEventListener('dragend', () => {
-      card.classList.remove('dragging')
-      card.draggable = false
-      this.dragEl = null
-    })
-    card.appendChild(grip)
-  }
-
-  /** An editable card for something the user said. */
-  private speechCard(ev: SpeechEvent): HTMLElement {
-    const card = document.createElement('div')
-    card.className = 'fb-card fb-card-speech'
-    this.makeDraggable(card, ev.id)
-    card.appendChild(mkDel(() => this.h.onDelete(ev.id)))
-
-    const time = document.createElement('span')
-    time.className = 'fb-ctime'
-    time.textContent = fmtTime(ev.t)
-    card.appendChild(time)
-
-    const body = document.createElement('div')
-    body.className = 'fb-say'
-    body.contentEditable = 'true'
-    body.spellcheck = false
-    body.title = 'Click to edit'
-    body.textContent = ev.text
-    body.addEventListener('input', () => this.h.onEdit(ev.id, body.textContent ?? ''))
-    card.appendChild(body)
-    return card
-  }
-
-  /** A card marking an element the user selected. */
-  private actionCard(ev: ActionEvent): HTMLElement {
-    const el = ev.element
-    const card = document.createElement('div')
-    card.className = 'fb-card fb-card-action'
-    const label = el.component ? esc(el.component) : `&lt;${esc(el.tag)}&gt;`
-    const refText = el.source ? srcStr(el.source) : (el.selector ?? el.outerHTMLSnippet)
-    // The element's own text is context (muted, labelled) — NOT the user's words,
-    // so it must not look like a transcript quote.
-    const said = el.text ? `<div class="fb-eltext">element text: &ldquo;${esc(el.text)}&rdquo;</div>` : ''
-    card.innerHTML =
-      `<div class="top"><span class="fb-badge">${ev.n}</span>` +
-      `<span class="fb-ctime">${fmtTime(ev.t)}</span>` +
-      `<span class="fb-comp">${label}</span></div>` +
-      `<div class="fb-src">${esc(refText)}</div>${said}`
-    // A typed note (text mode) is editable inline, like a speech card.
-    if (ev.note != null) {
-      const note = document.createElement('div')
-      note.className = 'fb-say'
-      note.contentEditable = 'true'
-      note.spellcheck = false
-      note.textContent = ev.note
-      note.addEventListener('input', () => this.h.onEdit(ev.id, note.textContent ?? ''))
-      card.appendChild(note)
-    }
-    this.makeDraggable(card, ev.id)
-    card.appendChild(mkBtn('fb-edit', '&#9998;', 'reselect element', () => this.h.onReselect(ev.id)))
-    card.appendChild(mkDel(() => this.h.onDelete(ev.id)))
-    // Hovering a card spotlights the element it points to, on the page.
-    card.addEventListener('mouseenter', () => {
-      if (!this.dragEl) this.h.onHover(ev.id, true)
-    })
-    card.addEventListener('mouseleave', () => this.h.onHover(ev.id, false))
-    return card
-  }
-
-  /** Toggle the one-shot reselect mode (dims the sheet, shows a hint). */
-  setReselecting(on: boolean, hint = 'Click the correct element · Esc to cancel'): void {
-    this.sheet.classList.toggle('dim', on)
-    if (on) {
-      this.notice.textContent = hint
-      this.notice.style.display = 'block'
-    } else {
-      this.notice.style.display = 'none'
-    }
-  }
-
-  showCopied(): void {
-    this.copyBtn.classList.add('done')
-    this.copyBtn.textContent = '✓ Copied'
-  }
-
-  showToast(text: string): void {
-    this.toasttext.textContent = text
+  showCopyFallback(text: string): void { this.fallback.style.display = 'block'; this.fallback.value = text; this.fallback.select() }
+  showToast(text: string, action?: { label: string; run: () => void }): void {
+    this.hideToast()
+    this.toastText.textContent = text
+    this.toastAction.hidden = !action
+    this.toastAction.textContent = action?.label ?? ''
+    this.toastAction.onclick = action ? () => { this.hideToast(); action.run() } : null
     this.toast.classList.add('show')
-    window.setTimeout(() => this.toast.classList.remove('show'), 2600)
+    this.positionToast()
+    this.toastTimer = window.setTimeout(() => this.hideToast(), action ? 7000 : 3200)
   }
 
-  showCopyFallback(text: string): void {
-    this.fallback.style.display = 'block'
-    this.fallback.value = text
-    this.fallback.focus()
-    this.fallback.select()
-    this.showToast('Copy blocked. Select the text and copy manually.')
+  hideToast(): void {
+    if (this.toastTimer != null) window.clearTimeout(this.toastTimer)
+    this.toastTimer = null
+    this.toast.classList.remove('show')
+    this.toastAction.hidden = true
+    this.toastAction.onclick = null
+  }
+
+  private positionToast(): void {
+    if (!this.toast.classList.contains('show')) return
+    const width = this.toast.offsetWidth
+    const height = this.toast.offsetHeight
+    const obstacles = [this.pill, this.composer, this.sheet].filter((el) =>
+      el === this.sheet ? el.classList.contains('open') : el.getBoundingClientRect().width > 0,
+    ).map((el) => el.getBoundingClientRect())
+    const maxLeft = Math.max(8, innerWidth - width - 8)
+    const positions = [
+      { left: Math.max(8, (innerWidth - width) / 2), top: 16 },
+      { left: 8, top: 16 }, { left: maxLeft, top: 16 },
+      ...obstacles.map((r) => ({ left: Math.min(maxLeft, Math.max(8, r.left)), top: r.bottom + 12 })),
+    ]
+    const fits = (p: { left: number; top: number }) => p.top + height <= innerHeight - 8 && obstacles.every((r) =>
+      p.left + width + 8 <= r.left || p.left >= r.right + 8 || p.top + height + 8 <= r.top || p.top >= r.bottom + 8,
+    )
+    const position = positions.find(fits) ?? positions[0]!
+    this.toast.style.left = `${position.left}px`
+    this.toast.style.top = `${position.top}px`
+  }
+
+  private showConfirm(title: string, message: string, okay: string, action: () => void): void {
+    this.confirmTitle.textContent = title
+    this.confirmMessage.textContent = message
+    this.confirmOkay.textContent = okay
+    this.confirmAction = action
+    this.confirm.classList.add('open')
+  }
+  private hideConfirm(): void { this.confirmAction = null; this.confirm.classList.remove('open') }
+
+  private showTip(element: HTMLElement): void {
+    const text = element.dataset.tip
+    if (!text) return
+    this.tip.textContent = text
+    const rect = element.getBoundingClientRect()
+    const width = this.tip.offsetWidth
+    const height = this.tip.offsetHeight
+    this.tip.style.left = `${Math.max(6, Math.min(rect.left + rect.width / 2 - width / 2, innerWidth - width - 6))}px`
+    this.tip.style.top = `${rect.top - height - 8 < 6 ? rect.bottom + 8 : rect.top - height - 8}px`
+    this.tip.classList.add('show')
+  }
+  private hideTip(): void { this.tip.classList.remove('show') }
+
+  private beginHudDrag(event: PointerEvent): void {
+    const rect = this.pill.getBoundingClientRect()
+    this.dragOffset = { dx: event.clientX - rect.left, dy: event.clientY - rect.top }
+    this.pill.style.left = `${rect.left}px`; this.pill.style.top = `${rect.top}px`; this.pill.style.right = 'auto'; this.pill.style.bottom = 'auto'
+    this.pill.classList.add('dragging')
+    this.handlers.onHudDrag(true)
+    window.addEventListener('pointermove', this.onHudMove, true)
+    window.addEventListener('pointerup', this.onHudUp, true)
+    event.preventDefault()
+  }
+  private onHudMove = (event: PointerEvent): void => {
+    if (!this.dragOffset) return
+    const x = Math.max(6, Math.min(event.clientX - this.dragOffset.dx, innerWidth - this.pill.offsetWidth - 6))
+    const y = Math.max(6, Math.min(event.clientY - this.dragOffset.dy, innerHeight - this.pill.offsetHeight - 6))
+    this.pill.style.left = `${x}px`; this.pill.style.top = `${y}px`
+    this.positionToast()
+  }
+  private onHudUp = (): void => {
+    this.dragOffset = null
+    this.pill.classList.remove('dragging')
+    window.removeEventListener('pointermove', this.onHudMove, true)
+    window.removeEventListener('pointerup', this.onHudUp, true)
+    this.savePosition()
+    this.handlers.onHudDrag(false)
+  }
+  private placeHud(): void {
+    const saved = this.loadPosition()
+    if (saved) {
+      this.pill.style.left = `${Math.max(6, Math.min(saved.x, innerWidth - this.pill.offsetWidth - 6))}px`
+      this.pill.style.top = `${Math.max(6, Math.min(saved.y, innerHeight - this.pill.offsetHeight - 6))}px`
+      this.pill.style.right = 'auto'; this.pill.style.bottom = 'auto'
+    } else {
+      const right = this.position === 'bottom-right'
+      this.pill.style.left = right ? 'auto' : '22px'; this.pill.style.right = right ? '22px' : 'auto'; this.pill.style.top = 'auto'; this.pill.style.bottom = '22px'
+    }
+  }
+  private loadPosition(): { x: number; y: number } | null {
+    try {
+      const value = JSON.parse(localStorage.getItem(HUD_POS_KEY) ?? 'null') as { x?: unknown; y?: unknown } | null
+      return value && typeof value.x === 'number' && typeof value.y === 'number' ? { x: value.x, y: value.y } : null
+    } catch { return null }
+  }
+  private savePosition(): void {
+    const x = Number.parseFloat(this.pill.style.left); const y = Number.parseFloat(this.pill.style.top)
+    if (!Number.isNaN(x) && !Number.isNaN(y)) try { localStorage.setItem(HUD_POS_KEY, JSON.stringify({ x, y })) } catch { /* unavailable */ }
   }
 
   destroy(): void {
+    this.composerResize.disconnect()
+    this.setComposerPreview(null)
+    this.hideToast()
     this.enableYield(false)
-    window.removeEventListener('mousemove', this.onDragMove, true)
-    window.removeEventListener('mouseup', this.onDragUp, true)
+    window.removeEventListener('pointermove', this.onHudMove, true)
+    window.removeEventListener('pointerup', this.onHudUp, true)
     this.clearPins()
     this.host.remove()
   }

@@ -65,8 +65,10 @@ export class WhisperProvider implements STTProvider {
   private uttStart = 0
   private interimEnabled = false
   private lastInterimAt = 0
+  private lastActivityAt = 0
   private busy = false
-  private pending: Promise<void>[] = []
+  private generation = 0
+  private queue: Promise<void> = Promise.resolve()
 
   constructor(private opts: WhisperOptions = {}) {}
 
@@ -79,6 +81,8 @@ export class WhisperProvider implements STTProvider {
   }
 
   async start(cb: STTCallbacks, clock: () => number): Promise<void> {
+    this.dispose()
+    const generation = this.generation
     this.cb = cb
     this.clock = clock
     this.running = true
@@ -87,11 +91,12 @@ export class WhisperProvider implements STTProvider {
     // and the mic-permission prompt both take longer than the default timeout).
     cb.onProgress?.('Preparing local speech model…')
 
-    this.transcriber = await this.loadModel(cb)
-    if (!this.running) return
+    const transcriber = await this.loadModel(cb)
+    if (generation !== this.generation || !this.running) return
+    this.transcriber = transcriber
     cb.onProgress?.('Requesting microphone…')
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       // Let the browser do its own denoise/AGC/echo cancellation first.
       audio: {
         channelCount: 1,
@@ -100,14 +105,16 @@ export class WhisperProvider implements STTProvider {
         autoGainControl: true,
       },
     })
-    if (!this.running) {
-      this.teardownAudio()
+    if (generation !== this.generation || !this.running) {
+      stream.getTracks().forEach((track) => track.stop())
       return
     }
+    this.stream = stream
 
     this.ctx = new AudioContext({ sampleRate: TARGET_RATE })
     this.sampleRate = this.ctx.sampleRate
     if (this.ctx.state === 'suspended') await this.ctx.resume()
+    if (generation !== this.generation || !this.running) return
 
     this.source = this.ctx.createMediaStreamSource(this.stream)
     // High-pass ~90 Hz to cut low-frequency rumble (HVAC, desk thumps, plosives)
@@ -178,8 +185,15 @@ export class WhisperProvider implements STTProvider {
         this.uttStart = this.clock()
         this.frames.push(...this.preRoll) // include the debounce frames + lead-in
         this.preRoll = []
+        this.cb?.onActivity?.()
+        this.lastActivityAt = this.clock()
       }
       if (this.speaking) {
+        const now = this.clock()
+        if (now - this.lastActivityAt >= 0.5) {
+          this.lastActivityAt = now
+          this.cb?.onActivity?.()
+        }
         this.speechMs += frameMs
         this.silenceMs = 0
         this.frames.push(copy)
@@ -211,8 +225,9 @@ export class WhisperProvider implements STTProvider {
     if (now - this.lastInterimAt < 1000) return
     this.lastInterimAt = now
     const audio = this.collect()
+    const cb = this.cb
     void this.run(audio, (text) => {
-      if (text) this.cb?.onInterim?.(text)
+      if (text) cb?.onInterim?.(text)
     })
   }
 
@@ -228,12 +243,9 @@ export class WhisperProvider implements STTProvider {
     this.frames = []
     if (speech < (this.opts.minSpeechMs ?? 250)) return
 
-    const p = this.run(audio, (text) => {
-      if (text && !isHallucination(text, speech)) this.cb?.onSegment?.({ t: start, end, text })
-    })
-    this.pending.push(p)
-    void p.finally(() => {
-      this.pending = this.pending.filter((x) => x !== p)
+    const cb = this.cb
+    void this.run(audio, (text) => {
+      if (text && !isHallucination(text, speech)) cb?.onSegment?.({ t: start, end, text })
     })
   }
 
@@ -250,20 +262,21 @@ export class WhisperProvider implements STTProvider {
     return this.sampleRate === TARGET_RATE ? merged : resample(merged, this.sampleRate, TARGET_RATE)
   }
 
-  private async run(audio: Float32Array, emit: (text: string) => void): Promise<void> {
+  private run(audio: Float32Array, emit: (text: string) => void): Promise<void> {
     const t = this.transcriber
-    if (!t || audio.length === 0) return
+    const generation = this.generation
+    if (!t || audio.length === 0) return Promise.resolve()
     this.busy = true
-    try {
-      const out = await t(audio)
-      // Always emit — the caller decides whether the result is still wanted. Gating
-      // on `running` here dropped the final utterance drained during stop().
-      emit((out?.text ?? '').trim())
-    } catch {
-      /* skip this chunk */
-    } finally {
-      this.busy = false
-    }
+    const job = this.queue.then(async () => {
+      if (generation !== this.generation) return
+      try {
+        const out = await t(audio)
+        if (generation === this.generation) emit((out?.text ?? '').trim())
+      } catch { /* Keep other utterances when one inference fails. */ }
+    })
+    this.queue = job
+    void job.finally(() => { if (this.queue === job) this.busy = false })
+    return job
   }
 
   async stop(): Promise<void> {
@@ -276,18 +289,18 @@ export class WhisperProvider implements STTProvider {
       const audio = this.collect()
       const start = this.uttStart
       const end = this.clock()
-      this.pending.push(
-        this.run(audio, (text) => {
-          if (text && !isHallucination(text, speech)) this.cb?.onSegment?.({ t: start, end, text })
-        }),
-      )
+      const cb = this.cb
+      void this.run(audio, (text) => {
+        if (text && !isHallucination(text, speech)) cb?.onSegment?.({ t: start, end, text })
+      })
     }
     this.speaking = false
     this.frames = []
     this.preRoll = []
     this.loudRun = 0
-    await Promise.allSettled(this.pending)
+    // Release the device before waiting for potentially expensive inference.
     this.teardownAudio()
+    await this.queue
   }
 
   pause(): void {
@@ -305,13 +318,17 @@ export class WhisperProvider implements STTProvider {
   }
 
   dispose(): void {
+    this.generation++
+    this.cb = null
     this.running = false
     this.speaking = false
     this.frames = []
     this.preRoll = []
     this.loudRun = 0
     this.noiseFloor = 0
-    this.pending = []
+    this.speechMs = 0
+    this.silenceMs = 0
+    this.lastInterimAt = 0
     this.transcriber = null
     this.teardownAudio()
   }
@@ -381,7 +398,7 @@ async function buildPipeline(
   try {
     transformers = await import('@huggingface/transformers')
   } catch {
-    cb.onNotice?.('Local speech model not installed, capturing clicks only.')
+    cb.onNotice?.('Local speech model not installed. Type your note instead.')
     throw new Error('feedbasha: @huggingface/transformers is not installed')
   }
 

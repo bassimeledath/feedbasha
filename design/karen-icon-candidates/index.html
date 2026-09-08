@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Karen — identity directions</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Spline+Sans:wght@400;500;600;700&family=Young+Serif&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f3efe8;
+        --paper: #fffdf8;
+        --ink: #211a24;
+        --muted: #746c76;
+        --line: rgba(33, 26, 36, 0.12);
+        --accent: #d95368;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+        font-family: "Instrument Sans", sans-serif;
+      }
+
+      main {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 64px 0 96px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 760px;
+        margin: 0;
+        font-size: clamp(40px, 7vw, 76px);
+        line-height: 0.96;
+        letter-spacing: -0.055em;
+      }
+
+      .intro {
+        max-width: 690px;
+        margin: 24px 0 52px;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.6;
+      }
+
+      h2 {
+        margin: 72px 0 10px;
+        font-size: 24px;
+        letter-spacing: -0.025em;
+      }
+
+      .section-note {
+        max-width: 700px;
+        margin: 0 0 24px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .icons {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .icon-card,
+      .direction-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--paper);
+        box-shadow: 0 14px 50px rgba(33, 26, 36, 0.06);
+      }
+
+      .art {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        overflow: hidden;
+        background: #f8f4ec;
+      }
+
+      .art > img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transform: scale(1.08);
+      }
+
+      .context-preview {
+        position: absolute;
+        right: 18px;
+        bottom: 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid rgba(255,255,255,.15);
+        border-radius: 999px;
+        background: rgba(32, 24, 36, 0.86);
+        color: white;
+        box-shadow: 0 10px 28px rgba(33, 26, 36, .2);
+        backdrop-filter: blur(10px);
+      }
+
+      .mini-icon {
+        width: 34px;
+        height: 34px;
+        overflow: hidden;
+        border-radius: 50%;
+        background: #fbf6ed;
+      }
+
+      .mini-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transform: scale(1.6);
+      }
+
+      .context-preview span {
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .card-copy { padding: 20px 22px 24px; }
+      .card-copy h3 { margin: 0 0 6px; font-size: 17px; }
+      .card-copy p { margin: 0; color: var(--muted); line-height: 1.5; }
+
+      .directions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .direction-card { padding: 22px; }
+      .direction-card[data-recommended="true"] { outline: 2px solid #d95368; outline-offset: -2px; }
+      .direction-card h3 { margin: 16px 0 6px; font-size: 20px; }
+      .direction-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+      .tag { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+
+      .type-sample {
+        margin: 22px 0;
+        font-size: 31px;
+        line-height: 1.02;
+        letter-spacing: -.035em;
+      }
+
+      .instrument { font-family: "Instrument Sans", sans-serif; }
+      .spline { font-family: "Spline Sans", sans-serif; }
+      .editorial { font-family: "Young Serif", serif; }
+
+      .swatches { display: flex; gap: 8px; margin-top: 20px; }
+      .swatch {
+        width: 38px;
+        height: 38px;
+        border: 1px solid rgba(0,0,0,.08);
+        border-radius: 12px;
+      }
+
+      .decision {
+        margin-top: 72px;
+        padding: 28px;
+        border-radius: 22px;
+        background: #211a24;
+        color: #fffaf1;
+      }
+
+      .decision h2 { margin: 0 0 10px; }
+      .decision p { max-width: 760px; margin: 0; color: rgba(255,250,241,.68); line-height: 1.6; }
+
+      @media (max-width: 760px) {
+        main { width: min(100% - 24px, 1180px); padding-top: 40px; }
+        .icons, .directions { grid-template-columns: 1fr; }
+        .art { aspect-ratio: 4 / 3; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Karen identity study</p>
+      <h1>A face for feedback.</h1>
+      <p class="intro">
+        Six image-model explorations for replacing the microphone launcher. These are form studies,
+        not final assets: the selected direction should be redrawn as a crisp SVG and tested at 16,
+        24, and 56 pixels before shipping.
+      </p>
+
+      <section>
+        <h2>Icon candidates</h2>
+        <p class="section-note">
+          The strongest candidates imply a personality without turning Karen into a literal or hostile caricature.
+        </p>
+        <div class="icons">
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/01-raised-brow.png" alt="Abstract face with bob haircut and raised eyebrow" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/01-raised-brow.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>01 — The raised brow</h3><p>Most characterful. Reads immediately as a person, but risks feeling too literal at small sizes.</p></div>
+          </article>
+
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/02-bob-bubble.png" alt="Abstract bob haircut merged with a speech bubble" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/02-bob-bubble.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>02 — The bob bubble</h3><p>Best product mark. Feedback and personality collapse into one simple, scalable silhouette.</p></div>
+          </article>
+
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/03-glasses-profile.png" alt="Angular profile with glasses and speech bubble geometry" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/03-glasses-profile.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>03 — The sharp profile</h3><p>Distinctive and assertive. It carries the joke hardest, but has too much detail for a tiny control.</p></div>
+          </article>
+
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/04-comment-face.png" alt="Simple face with asymmetrical eyebrow inside a comment bubble" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/04-comment-face.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>04 — The comment face</h3><p>Friendly and legible. The safest direction, though less ownable than the bob bubble.</p></div>
+          </article>
+
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/04b-comment-face-glasses.png" alt="Simple comment-bubble face with bold glasses and asymmetrical eyebrows" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/04b-comment-face-glasses.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>04B — The comment face, glasses</h3><p>Keeps both eyebrows and the friendly speech-bubble silhouette while adding a more recognizable, opinionated signature.</p></div>
+          </article>
+
+          <article class="icon-card">
+            <div class="art">
+              <img src="assets/04c-comment-face-glasses-only.png" alt="Simple comment-bubble face with bold glasses and no eyebrows" />
+              <div class="context-preview"><div class="mini-icon"><img src="assets/04c-comment-face-glasses-only.png" alt="" /></div><span>Launcher preview</span></div>
+            </div>
+            <div class="card-copy"><h3>04C — The comment face, glasses only</h3><p>The cleanest version. It keeps the recognizable silhouette while staying calm and legible at launcher size.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Personality, type, and color</h2>
+        <p class="section-note">Three coherent directions to align on before production styling. Direction A is my recommendation.</p>
+        <div class="directions">
+          <article class="direction-card" data-recommended="true">
+            <span class="tag">A · Recommended</span>
+            <div class="type-sample instrument">Sharp, helpful, and a little amused.</div>
+            <h3>Constructive Karen</h3>
+            <p>Direct microcopy, never mean. Instrument Sans feels human and precise without looking like generic AI software.</p>
+            <div class="swatches" aria-label="Plum, cream, persimmon, lilac palette"><span class="swatch" style="background:#241b2f"></span><span class="swatch" style="background:#fff8ee"></span><span class="swatch" style="background:#df5f55"></span><span class="swatch" style="background:#a897d9"></span></div>
+          </article>
+
+          <article class="direction-card">
+            <span class="tag">B · Calm</span>
+            <div class="type-sample spline">Clear feedback, no theatrics.</div>
+            <h3>Calm critic</h3>
+            <p>Spline Sans is warmer and rounder. The petrol-and-coral palette feels capable with a small spark of humor.</p>
+            <div class="swatches" aria-label="Petrol, cream, coral, mint palette"><span class="swatch" style="background:#133235"></span><span class="swatch" style="background:#f7f3e9"></span><span class="swatch" style="background:#ef725f"></span><span class="swatch" style="background:#75b9a8"></span></div>
+          </article>
+
+          <article class="direction-card">
+            <span class="tag">C · Expressive</span>
+            <div class="type-sample editorial">I have a few notes.</div>
+            <h3>Editorial wit</h3>
+            <p>A display serif used only for rare headings, paired with a sans for controls. Memorable, but easiest to overdo.</p>
+            <div class="swatches" aria-label="Ink, parchment, cherry, citron palette"><span class="swatch" style="background:#202123"></span><span class="swatch" style="background:#faf4e6"></span><span class="swatch" style="background:#c94355"></span><span class="swatch" style="background:#c8d86d"></span></div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="decision">
+        <h2>Decision needed</h2>
+        <p>Pick one icon number and one personality direction. They can be mixed—for example, icon 02 with direction A. Production work should then turn the chosen image concept into a deterministic SVG, define tokens, and tune copy around that single voice.</p>
+      </aside>
+    </main>
+  </body>
+</html>

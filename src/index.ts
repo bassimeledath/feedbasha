@@ -5,9 +5,9 @@ export * from './types'
 
 export interface FeedbashaInstance {
   /** Start a feedback session programmatically. */
-  start(): void
+  start(): Promise<void>
   /** Stop the current session and open review. */
-  stop(): void
+  stop(): Promise<void>
   /** Remove the widget and clean up. */
   destroy(): void
 }
@@ -15,19 +15,19 @@ export interface FeedbashaInstance {
 let current: Session | null = null
 
 /**
- * Mount the feedbasha widget. Dev-only tool: source locations only exist in
+ * Mount Karen. Dev-only tool: source locations only exist in
  * development builds. Safe to call in SSR (no-ops without a DOM).
  */
 export function init(config: FeedbashaConfig = {}): FeedbashaInstance {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return { start() {}, stop() {}, destroy() {} }
+    return { async start() {}, async stop() {}, destroy() {} }
   }
   current?.destroy()
   const session = new Session(config)
   current = session
   return {
-    start: () => void session.start(),
-    stop: () => void session.stop(),
+    start: () => session.start(),
+    stop: () => session.stop(),
     destroy: () => {
       session.destroy()
       if (current === session) current = null

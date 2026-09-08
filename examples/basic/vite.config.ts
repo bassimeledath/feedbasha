@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { karen } from '../../src/vite'
 import { fileURLToPath } from 'node:url'
 
 // Import feedbasha straight from source for instant HMR (no build step).
@@ -8,7 +9,7 @@ const feedbashaWhisper = fileURLToPath(new URL('../../src/whisper.ts', import.me
 const feedbashaRoot = fileURLToPath(new URL('../../', import.meta.url))
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), karen()],
   resolve: {
     // Subpath first so it wins over the bare 'feedbasha' alias.
     alias: { 'feedbasha/whisper': feedbashaWhisper, feedbasha: feedbashaSrc },
