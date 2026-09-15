@@ -1,6 +1,4 @@
-<h1><img src="assets/karen-wordmark.svg" alt="Karen" width="356" height="128"></h1>
-
-**App feedback as easy as complaining.**
+<h1><img src="assets/karen-wordmark.svg" alt="Karen — App feedback as easy as complaining." width="498" height="128"></h1>
 
 Point at something in your app. Say what should change. Karen packages your feedback with component names, source locations, and optional region screenshots—ready to paste into your coding agent.
 
