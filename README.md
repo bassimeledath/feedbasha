@@ -1,6 +1,6 @@
 <h1><img src="assets/karen-wordmark.svg" alt="Karen" width="356" height="128"></h1>
 
-**Speak your app feedback.**
+**App feedback as easy as complaining.**
 
 Point at something in your app. Say what should change. Karen packages your feedback with component names, source locations, and optional region screenshots—ready to paste into your coding agent.
 
@@ -10,7 +10,7 @@ A development-only overlay for React apps. You bring the opinions; Karen brings 
 
 🔊 **Sound on.** This demo includes spoken feedback.
 
-https://github.com/user-attachments/assets/f945b269-8502-4aa4-b744-2f7a3db4b5d2
+https://github.com/user-attachments/assets/9af14392-70aa-4a89-9807-67b8197e58a0
 
 ## The feedback loop
 
