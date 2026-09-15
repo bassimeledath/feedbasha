@@ -2,6 +2,12 @@
 
 Karen is a development-only feedback overlay for React apps. Pick an element or drag a region, then attach one editable note by speaking or typing. Review the target, component metadata, and note together; copy the result as paste-ready Markdown for your coding agent.
 
+## Demo
+
+🔊 **Watch with sound—this demo includes spoken feedback.**
+
+https://github.com/user-attachments/assets/26f8cda3-916f-422d-9551-8834ac6d3e15
+
 The product is **Karen**. The technical import remains `feedbasha` for compatibility with existing integrations.
 
 > Karen is not published to npm. Install this repository or a tagged release; `npm install feedbasha` refers to an unrelated package.
