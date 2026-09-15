@@ -1,6 +1,4 @@
-<img src="assets/karen-mark.svg" alt="Karen: a bob haircut, glasses, and something to say" width="128" height="128">
-
-# Karen
+<h1><img src="assets/karen-wordmark.svg" alt="Karen" width="356" height="128"></h1>
 
 **Speak your app feedback.**
 
@@ -44,6 +42,10 @@ Open the localhost URL, click Karen, and select something to give feedback on. A
 - **Your agent needs the files.** Region screenshots are optional; the included demo saves them locally and copies their paths, not the image pixels. The coding agent needs access to that same filesystem.
 - **Voice isn't always offline.** Browser speech may send audio to the browser's speech service. An optional Whisper provider supports local transcription after its model downloads. Text works without a microphone.
 - **No npm release yet.** The Git repository is `karen`; the package/import is still `feedbasha`. Don't run `npm install feedbasha`—that's an unrelated npm package.
+
+## Built with
+
+[React Grab](https://github.com/aidenybai/react-grab) powers Karen's component and source-location lookup. Karen adds voice and text notes, region capture, review, and the feedback handoff. Thanks to Aiden Bai and the React Grab contributors.
 
 Found something that deserves a word? [Open an issue](https://github.com/bassimeledath/karen/issues).
 
