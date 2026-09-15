@@ -1,9 +1,8 @@
-<p align="center">
-  <img src="assets/karen.png" alt="Karen: a bob haircut, glasses, and something to say" width="128" height="128">
-</p>
-<h1 align="center">Karen</h1>
-<p align="center"><strong>Speak your app feedback.</strong></p>
-<p align="center"><em>She'd like a word with your coding agent.</em></p>
+<img src="assets/karen-mark.svg" alt="Karen: a bob haircut, glasses, and something to say" width="128" height="128">
+
+# Karen
+
+**Speak your app feedback.**
 
 Point at something in your app. Say what should change. Karen packages your feedback with component names, source locations, and optional region screenshots—ready to paste into your coding agent.
 
