@@ -4,7 +4,7 @@
 
 Point at something in your app. Say what should change. Karen packages your feedback with component names, source locations, and optional region screenshots—ready to paste into your coding agent.
 
-A development-only overlay for React apps. You bring the opinions; Karen brings the context.
+A development-only overlay for React apps. You bring the opinions and Karen turns it into usable context for your coding agent.
 
 ## See her in action
 
